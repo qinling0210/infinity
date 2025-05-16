@@ -203,6 +203,7 @@ Status NewTxn::CreateDatabase(const String &db_name, ConflictType conflict_type,
     CreateDBTxnStore *txn_store = static_cast<CreateDBTxnStore *>(base_txn_store_.get());
     txn_store->db_name_ = db_name;
     txn_store->comment_ptr_ = comment;
+    txn_store->db_id_str_ = db_id_str;
     txn_store->db_id_ = std::stoull(db_id_str);
     return Status::OK();
 }
@@ -406,6 +407,8 @@ Status NewTxn::AddColumns(const String &db_name, const String &table_name, const
     txn_store->db_id_str_ = db_meta->db_id_str();
     txn_store->db_id_ = std::stoull(db_meta->db_id_str());
     txn_store->table_name_ = table_name;
+    txn_store->table_id_str_ = table_meta->table_id_str();
+    txn_store->table_id_ = std::stoull(table_meta->table_id_str());
     txn_store->column_defs_ = column_defs;
     txn_store->table_key_ = table_key;
 
@@ -487,6 +490,8 @@ Status NewTxn::DropColumns(const String &db_name, const String &table_name, cons
     txn_store->db_id_str_ = db_meta->db_id_str();
     txn_store->db_id_ = std::stoull(db_meta->db_id_str());
     txn_store->table_name_ = table_name;
+    txn_store->table_id_str_ = table_meta->table_id_str();
+    txn_store->table_id_ = std::stoull(table_meta->table_id_str());
     txn_store->column_names_ = column_names;
     txn_store->column_ids_ = column_ids;
     txn_store->table_key_ = table_key;
@@ -1187,7 +1192,7 @@ WalEntry *NewTxn::GetWALEntry() const { return wal_entry_.get(); }
 
 Status NewTxn::Commit() {
     DeferFn defer_op([&] { txn_store_.RevertTableStatus(); });
-    if ((wal_entry_->cmds_.empty() && base_txn_store_ == nullptr && txn_store_.ReadOnly() && !this->IsReplay()) or txn_type_ == TxnType::kReadOnly) {
+    if ((base_txn_store_ == nullptr && txn_store_.ReadOnly() && !this->IsReplay()) or txn_type_ == TxnType::kReadOnly) {
         // Don't need to write empty WalEntry (read-only transactions).
         TxnTimeStamp commit_ts = txn_mgr_->GetReadCommitTS(this);
         this->SetTxnCommitting(commit_ts);
@@ -1250,7 +1255,7 @@ Status NewTxn::Commit() {
     }
 
     if (status.ok()) {
-        status = this->PrepareCommit(commit_ts);
+        status = this->PrepareCommit();
     }
 
     if (!status.ok()) {
@@ -1280,7 +1285,7 @@ Status NewTxn::CommitReplay() {
 
     this->SetTxnCommitting(commit_ts);
 
-    Status status = this->PrepareCommit(commit_ts);
+    Status status = this->PrepareCommit();
     if (!status.ok()) {
         UnrecoverableError(fmt::format("Replay transaction, prepare commit: {}", status.message()));
     }
@@ -1306,10 +1311,10 @@ Status NewTxn::CommitRecovery() {
     return Status::OK();
 }
 
-Status NewTxn::PrepareCommit(TxnTimeStamp commit_ts) {
+Status NewTxn::PrepareCommit() {
     // TODO: for replayed transaction, meta data need to check if there is duplicated operation.
     if (base_txn_store_.get() != nullptr) {
-        wal_entry_ = base_txn_store_->ToWalEntry();
+        wal_entry_ = base_txn_store_->ToWalEntry(this->CommitTS());
     }
     for (auto &command : wal_entry_->cmds_) {
         WalCommandType command_type = command->GetType();
@@ -1399,15 +1404,6 @@ Status NewTxn::PrepareCommit(TxnTimeStamp commit_ts) {
                 break;
             }
             case WalCommandType::APPEND_V2: {
-                auto *append_cmd = static_cast<WalCmdAppendV2 *>(command.get());
-                Status status = CommitAppend(append_cmd, kv_instance_.get());
-                if (!status.ok()) {
-                    return status;
-                }
-                status = PostCommitAppend(append_cmd, kv_instance_.get());
-                if (!status.ok()) {
-                    return status;
-                }
                 break;
             }
             case WalCommandType::DELETE_V2: {
@@ -1452,11 +1448,6 @@ Status NewTxn::PrepareCommit(TxnTimeStamp commit_ts) {
                 break;
             }
         }
-    }
-
-    String commit_ts_str = std::to_string(commit_ts);
-    for (const String &meta_key : keys_wait_for_commit_) {
-        kv_instance_->Put(meta_key, commit_ts_str);
     }
     return Status::OK();
 }
@@ -2217,6 +2208,14 @@ bool NewTxn::CheckConflictTxnStore(const AppendTxnStore &txn_store, NewTxn *prev
         case TransactionType::kDropTable: {
             DropTableTxnStore *drop_table_txn_store = static_cast<DropTableTxnStore *>(previous_txn->base_txn_store_.get());
             if (drop_table_txn_store->db_name_ == db_name && drop_table_txn_store->table_name_ == table_name) {
+                retry_query = false;
+                conflict = true;
+            }
+            break;
+        }
+        case TransactionType::kRenameTable: {
+            RenameTableTxnStore *rename_table_txn_store = static_cast<RenameTableTxnStore *>(previous_txn->base_txn_store_.get());
+            if (rename_table_txn_store->db_name_ == db_name && rename_table_txn_store->old_table_name_ == table_name) {
                 retry_query = false;
                 conflict = true;
             }
@@ -3537,7 +3536,29 @@ void NewTxn::CommitBottom() {
     if (txn_state != TxnState::kCommitting) {
         UnrecoverableError(fmt::format("Unexpected transaction state: {}", TxnState2Str(txn_state)));
     }
-    // TODO: Append, Update, DumpMemoryIndex
+    // TODO: DumpMemoryIndex
+    for (auto &command : wal_entry_->cmds_) {
+        WalCommandType command_type = command->GetType();
+        switch (command_type) {
+            case WalCommandType::APPEND_V2: {
+                auto *append_cmd = static_cast<WalCmdAppendV2 *>(command.get());
+                Status status = CommitBottomAppend(append_cmd);
+                if (!status.ok()) {
+                    UnrecoverableError(fmt::format("CommitBottomAppend faield: {}", status.message()));
+                }
+                break;
+            }
+            default: {
+                break;
+            }
+        }
+    }
+
+    TxnTimeStamp commit_ts = this->CommitTS();
+    String commit_ts_str = std::to_string(commit_ts);
+    for (const String &meta_key : keys_wait_for_commit_) {
+        kv_instance_->Put(meta_key, commit_ts_str);
+    }
     txn_mgr_->CommitBottom(this);
 }
 
