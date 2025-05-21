@@ -3709,11 +3709,11 @@ Status NewTxn::PostRollback(TxnTimeStamp abort_ts) {
                 break;
             }
             case WalCommandType::IMPORT_V2: {
-                ImportTxnStore *append_txn_store = static_cast<ImportTxnStore *>(base_txn_store_.get());
+                ImportTxnStore *import_txn_store = static_cast<ImportTxnStore *>(base_txn_store_.get());
 
-                SizeT data_block_count = append_txn_store->input_blocks_.size();
+                SizeT data_block_count = import_txn_store->input_blocks_in_imports_[0].size();
                 for (SizeT block_idx = 0; block_idx < data_block_count; ++block_idx) {
-                    append_txn_store->input_blocks_[block_idx]->UnInit();
+                    import_txn_store->input_blocks_in_imports_[0][block_idx]->UnInit();
                 }
                 break;
             }
