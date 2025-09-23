@@ -277,7 +277,7 @@ Status ChunkIndexMeta::LoadSet() {
                                                            column_def,
                                                            row_count,
                                                            buffer_mgr->persistence_manager());
-            index_buffer_ = buffer_mgr->GetBufferObject(std::move(index_file_worker));
+            index_buffer_ = buffer_mgr->GetBufferObject(index_file_worker->GetFilePath());
             break;
         }
         case IndexType::kFullText: {
@@ -288,7 +288,7 @@ Status ChunkIndexMeta::LoadSet() {
                                                                      std::move(column_length_file_name),
                                                                      row_count * sizeof(u32),
                                                                      buffer_mgr->persistence_manager());
-            index_buffer_ = buffer_mgr->GetBufferObject(std::move(index_file_worker));
+            index_buffer_ = buffer_mgr->GetBufferObject(index_file_worker->GetFilePath());
             break;
         }
         case IndexType::kIVF: {
@@ -301,7 +301,7 @@ Status ChunkIndexMeta::LoadSet() {
                                                      index_base,
                                                      column_def,
                                                      buffer_mgr->persistence_manager());
-            index_buffer_ = buffer_mgr->GetBufferObject(std::move(index_file_worker));
+            index_buffer_ = buffer_mgr->GetBufferObject(index_file_worker->GetFilePath());
             break;
         }
         case IndexType::kHnsw: {
@@ -314,7 +314,7 @@ Status ChunkIndexMeta::LoadSet() {
                                                                       column_def,
                                                                       buffer_mgr->persistence_manager(),
                                                                       index_size);
-            index_buffer_ = buffer_mgr->GetBufferObject(std::move(index_file_worker));
+            index_buffer_ = buffer_mgr->GetBufferObject(index_file_worker->GetFilePath());
             break;
         }
         case IndexType::kBMP: {
@@ -327,7 +327,7 @@ Status ChunkIndexMeta::LoadSet() {
                                                                     column_def,
                                                                     buffer_mgr->persistence_manager(),
                                                                     index_size);
-            index_buffer_ = buffer_mgr->GetBufferObject(std::move(file_worker));
+            index_buffer_ = buffer_mgr->GetBufferObject(file_worker->GetFilePath());
             break;
         }
         case IndexType::kEMVB: {
@@ -341,7 +341,7 @@ Status ChunkIndexMeta::LoadSet() {
                                                                      column_def,
                                                                      segment_start_offset,
                                                                      buffer_mgr->persistence_manager());
-            index_buffer_ = buffer_mgr->GetBufferObject(std::move(file_worker));
+            index_buffer_ = buffer_mgr->GetBufferObject(file_worker->GetFilePath());
             break;
         }
         default: {
