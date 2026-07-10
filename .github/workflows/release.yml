@@ -74,7 +74,7 @@ jobs:
         BUILDER_CONTAINER=infinity_builder
         echo "BUILDER_CONTAINER=${BUILDER_CONTAINER}" >> ${GITHUB_ENV}
         TZ=$(readlink -f /etc/localtime | awk -F '/zoneinfo/' '{print $2}')
-        docker rm -f ${BUILDER_CONTAINER} && docker run -d --name ${BUILDER_CONTAINER} -e TZ=${TZ} -e UV_INDEX=https://pypi.org/simple/ -v ${PWD}:/infinity ${{ matrix.builder_image }}
+        docker run -d --name ${BUILDER_CONTAINER} -e TZ=${TZ} -e UV_INDEX=https://pypi.org/simple/ -v ${PWD}:/infinity ${{ matrix.builder_image }}
 
     - name: Create libstdc++ modules JSON for cross-compilation
       run: |
@@ -93,6 +93,8 @@ jobs:
             export SYS_ROOT=/x86_64-linux-gnu/x86_64-linux-gnu/sysroot/
             export GCC_TOOLCHAIN=/x86_64-linux-gnu/
             export DEB_ARCH=amd64
+            export RPM_ARCH=x86_64
+            export PACKAGE_SUFFIX=v1
             export CHAINLOAD_TOOLCHAIN=x86_64-linux-v1.cmake
             export STDLIB_MODULES_JSON=/x86_64-linux-gnu/lib/gcc/x86_64-linux-gnu/15.2.0/libstdc++.modules.json
             ;;
@@ -101,6 +103,8 @@ jobs:
             export SYS_ROOT=/x86_64-linux-gnu/x86_64-linux-gnu/sysroot/
             export GCC_TOOLCHAIN=/x86_64-linux-gnu/
             export DEB_ARCH=amd64
+            export RPM_ARCH=x86_64
+            export PACKAGE_SUFFIX=v2
             export CHAINLOAD_TOOLCHAIN=x86_64-linux-v2.cmake
             export STDLIB_MODULES_JSON=/x86_64-linux-gnu/lib/gcc/x86_64-linux-gnu/15.2.0/libstdc++.modules.json
             ;;
@@ -109,6 +113,8 @@ jobs:
             export SYS_ROOT=/x86_64-linux-gnu/x86_64-linux-gnu/sysroot/
             export GCC_TOOLCHAIN=/x86_64-linux-gnu/
             export DEB_ARCH=amd64
+            export RPM_ARCH=x86_64
+            export PACKAGE_SUFFIX=v3
             export CHAINLOAD_TOOLCHAIN=x86_64-linux-v3.cmake
             export STDLIB_MODULES_JSON=/x86_64-linux-gnu/lib/gcc/x86_64-linux-gnu/15.2.0/libstdc++.modules.json
             ;;
@@ -117,6 +123,8 @@ jobs:
             export SYS_ROOT=/x86_64-linux-gnu/x86_64-linux-gnu/sysroot/
             export GCC_TOOLCHAIN=/x86_64-linux-gnu/
             export DEB_ARCH=amd64
+            export RPM_ARCH=x86_64
+            export PACKAGE_SUFFIX=v4
             export CHAINLOAD_TOOLCHAIN=x86_64-linux-v4.cmake
             export STDLIB_MODULES_JSON=/x86_64-linux-gnu/lib/gcc/x86_64-linux-gnu/15.2.0/libstdc++.modules.json
             ;;
@@ -125,12 +133,14 @@ jobs:
             export SYS_ROOT=/x86_64-aarch64-none-linux-gnu-15.2.1/aarch64-none-linux-gnu/libc/
             export GCC_TOOLCHAIN=/x86_64-aarch64-none-linux-gnu-15.2.1/
             export DEB_ARCH=arm64
+            export RPM_ARCH=aarch64
+            export PACKAGE_SUFFIX=
             export CHAINLOAD_TOOLCHAIN=arm64-linux.cmake
             export STDLIB_MODULES_JSON=/x86_64-aarch64-none-linux-gnu-15.2.1/lib/gcc/aarch64-none-linux-gnu/15.2.1/libstdc++.modules.json
             ;;
         esac
 
-        docker exec ${BUILDER_CONTAINER} bash -c "apt install -y rpm"
+        docker exec ${BUILDER_CONTAINER} bash -c "apt-fast -y update && apt-fast install -y rpm"
 
         docker exec ${BUILDER_CONTAINER} bash -c "
             git config --global safe.directory \"*\" && \
@@ -144,8 +154,10 @@ jobs:
               -DVCPKG_TARGET_TRIPLET=${TRIPLET} \
               -DCMAKE_CXX_STDLIB_MODULES_JSON=${STDLIB_MODULES_JSON} \
               -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-              -DCPACK_PACKAGE_VERSION=${RELEASE_TAG}-${{ matrix.target }} \
+              -DCPACK_PACKAGE_VERSION=${RELEASE_TAG} \
+              -DPACKAGE_SUFFIX=${PACKAGE_SUFFIX} \
               -DCPACK_DEBIAN_PACKAGE_ARCHITECTURE=${DEB_ARCH} \
+              -DCPACK_RPM_PACKAGE_ARCHITECTURE=${RPM_ARCH} \
               -S /infinity -B /infinity/cmake-build-reldeb && \
             cmake --build /infinity/cmake-build-reldeb --target infinity && \
             cd /infinity/cmake-build-reldeb && cpack"
@@ -187,13 +199,6 @@ jobs:
           -t infiniflow/infinity:${RELEASE_TAG}-${{ matrix.target }} \
           -f scripts/Dockerfile_infinity .
           docker push infiniflow/infinity:${RELEASE_TAG}-${{ matrix.target }}
-        fi
-
-    - name: Destroy builder container
-      if: always()  # always run this step even if previous steps failed
-      run: |
-        if [ -n "${BUILDER_CONTAINER}" ]; then
-          docker rm -f -v ${BUILDER_CONTAINER}
         fi
 
   release:
