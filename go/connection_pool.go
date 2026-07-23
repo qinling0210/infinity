@@ -276,7 +276,8 @@ func (p *ConnectionPool) Put(conn *InfinityConnection) error {
 		return NewInfinityException(int(ErrorCodeInvalidParameterValue), "Connection is already in pool (double release)")
 	}
 
-	// Always return connection to pool (no max size limit)
+	// Release the connection back to the pool; if the idle list is at
+	// MaxIdle capacity, close the excess connection instead of keeping it.
 	pooledConn.lastUsedAt = time.Now()
 	pooledConn.inUse = false
 	if len(p.available) < p.config.MaxIdle {

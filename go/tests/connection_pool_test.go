@@ -17,6 +17,7 @@ package tests
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/infiniflow/infinity-go-sdk"
 )
@@ -207,6 +208,51 @@ func TestConnectionPoolZeroMaxIdle(t *testing.T) {
 	stats = pool.Stats()
 	if stats.TotalConnections != 0 || stats.AvailableConnections != 0 || stats.InUseConnections != 0 {
 		t.Fatalf("Expected returned connection to be closed when MaxIdle is 0, got %+v", stats)
+	}
+
+	// Regression: a Get() blocked at MaxOpen must be woken when a Put frees
+	// capacity, even though MaxIdle is 0. The returned connection is closed,
+	// so the waiter must be allowed to create a fresh one.
+	blockedConn, err := pool.Get()
+	if err != nil {
+		t.Fatalf("Failed to get connection for contended case: %v", err)
+	}
+
+	gotCh := make(chan *infinity.InfinityConnection, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		c, e := pool.Get()
+		if e != nil {
+			errCh <- e
+			return
+		}
+		gotCh <- c
+	}()
+
+	// Confirm the waiter is actually blocked before capacity is freed.
+	select {
+	case <-gotCh:
+		t.Fatal("waiter acquired a connection before capacity was freed")
+	case <-errCh:
+		t.Fatal("waiter errored before capacity was freed")
+	case <-time.After(200 * time.Millisecond):
+		// Expected: still blocked at MaxOpen.
+	}
+
+	if err := pool.Put(blockedConn); err != nil {
+		t.Fatalf("Failed to put connection back in contended case: %v", err)
+	}
+
+	select {
+	case c := <-gotCh:
+		if c == nil {
+			t.Fatal("waiter got nil connection after capacity freed")
+		}
+		_ = pool.Put(c)
+	case e := <-errCh:
+		t.Fatalf("waiter failed after capacity freed: %v", e)
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter blocked indefinitely after Put freed capacity (MaxIdle=0 regression)")
 	}
 }
 

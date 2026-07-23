@@ -78,7 +78,7 @@ func NewInfinityConnectionWithConfig(address NetworkAddress, conf *thrift.TConfi
 	bufferedTransport := thrift.NewTBufferedTransport(transport, 8192)
 
 	// Create binary protocol (matching Python's TBinaryProtocol)
-	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
+	protocolFactory := thrift.NewTBinaryProtocolFactoryConf(conf)
 	protocol := protocolFactory.GetProtocol(bufferedTransport)
 
 	// Create client
