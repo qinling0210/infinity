@@ -1017,22 +1017,31 @@ void RcuMap<Key, Value>::emplace(const Key &key, Args &&...args) {
 
 template <typename Key, typename Value>
 u32 RcuMap<Key, Value>::range(const Key &key_min, const Key &key_max, std::vector<Value> &result) const {
-    rcu_reader_count_.fetch_add(1, std::memory_order_acquire);
-
-    InnerMap *current_read = read_map_;
-    auto read_begin = current_read->lower_bound(key_min);
-    auto read_end = current_read->upper_bound(key_max);
-
+    // 1. Acquire dirty snapshot under lock FIRST — avoids lock-ordering inversion
+    //    where CheckSwapInLock holds dirty_lock_ and waits for readers to drain.
     InnerMap *dirty_snapshot = nullptr;
     {
         std::lock_guard<std::mutex> lock(dirty_lock_);
         dirty_snapshot = dirty_map_;
     }
 
+    // 2. Now pin the reader count (read_map_ is stable)
+    rcu_reader_count_.fetch_add(1, std::memory_order_acquire);
+
+    // RAII: release reader count on any exit path (normal or exceptional)
+    struct RcuReaderGuard {
+        std::atomic<u64> &cnt_;
+        ~RcuReaderGuard() { cnt_.fetch_sub(1, std::memory_order_release); }
+    } guard{rcu_reader_count_};
+
+    InnerMap *current_read = read_map_;
+    auto read_begin = current_read->lower_bound(key_min);
+    auto read_end = current_read->upper_bound(key_max);
+
     auto dirty_begin = dirty_snapshot->lower_bound(key_min);
     auto dirty_end = dirty_snapshot->upper_bound(key_max);
 
-    // merge - for std::map, we prioritize dirty_map values over read_map
+    // merge — dirty_map values take priority over read_map
     u32 count = 0;
     auto read_it = read_begin;
     auto dirty_it = dirty_begin;
@@ -1055,8 +1064,8 @@ u32 RcuMap<Key, Value>::range(const Key &key_min, const Key &key_max, std::vecto
         ++read_it;
     }
 
-    rcu_reader_count_.fetch_sub(1, std::memory_order_release);
     return count;
+    // ~RcuReaderGuard releases reader count
 }
 
 // MapWithLock compatibility methods implementation
@@ -1110,17 +1119,25 @@ template <typename Key, typename Value>
 void RcuMap<Key, Value>::Range(const Key &key_min, const Key &key_max, std::vector<std::pair<Key, Value>> &items) {
     items.clear();
 
-    rcu_reader_count_.fetch_add(1, std::memory_order_acquire);
-
-    InnerMap *current_read = read_map_;
-    auto read_begin = current_read->lower_bound(key_min);
-    auto read_end = current_read->upper_bound(key_max);
-
+    // 1. Acquire dirty snapshot under lock FIRST — avoids lock-ordering inversion
     InnerMap *dirty_snapshot = nullptr;
     {
         std::lock_guard<std::mutex> lock(dirty_lock_);
         dirty_snapshot = dirty_map_;
     }
+
+    // 2. Now pin the reader count (read_map_ is stable)
+    rcu_reader_count_.fetch_add(1, std::memory_order_acquire);
+
+    // RAII: release reader count on any exit path
+    struct RcuReaderGuard {
+        std::atomic<u64> &cnt_;
+        ~RcuReaderGuard() { cnt_.fetch_sub(1, std::memory_order_release); }
+    } guard{rcu_reader_count_};
+
+    InnerMap *current_read = read_map_;
+    auto read_begin = current_read->lower_bound(key_min);
+    auto read_end = current_read->upper_bound(key_max);
 
     auto dirty_begin = dirty_snapshot->lower_bound(key_min);
     auto dirty_end = dirty_snapshot->upper_bound(key_max);
@@ -1140,8 +1157,7 @@ void RcuMap<Key, Value>::Range(const Key &key_min, const Key &key_max, std::vect
             items.emplace_back(it->first, it->second.value_);
         }
     }
-
-    rcu_reader_count_.fetch_sub(1, std::memory_order_release);
+    // ~RcuReaderGuard releases reader count
 }
 
 template <typename Key, typename Value>
