@@ -336,7 +336,13 @@ std::unique_ptr<std::binary_semaphore> MemoryIndexer::AsyncInsert(std::shared_pt
             LOG_ERROR(fmt::format("AsyncInsert invert task failed, seq={}, unknown error", task->task_seq_));
         }
         if (success) {
-            CommitSync(100);
+            if (CommitSync(100) == 0) {
+                // Another committer may have owned mutex_commit_ while this
+                // task published its inverter. Requeue a background commit so
+                // the ring is eventually drained and transaction semaphores
+                // are released.
+                Commit(false);
+            }
         } else {
             for (auto *sema : inverter->semas()) {
                 sema->release();
