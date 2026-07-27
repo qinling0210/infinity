@@ -618,6 +618,11 @@ private:
     InnerMap *volatile read_map_;
     std::size_t miss_time_;
 
+    // RCU reader count: incremented by readers before accessing read_map_,
+    // decremented after the read is complete. Writers (CheckSwapInLock, CheckGc)
+    // wait for this to reach 0 before freeing old maps, preventing use-after-free.
+    mutable std::atomic<u64> rcu_reader_count_{0};
+
     mutable std::mutex dirty_lock_;
     InnerMap *dirty_map_;
 
@@ -662,6 +667,9 @@ typename RcuMap<Key, Value>::MapValue RcuMap<Key, Value>::CreateMapValue(const V
 
 template <typename Key, typename Value>
 Value *RcuMap<Key, Value>::Get(const Key &key, bool update_access_time) {
+    // RCU read protection: prevent write-side GC from freeing read_map_ during iteration
+    rcu_reader_count_.fetch_add(1, std::memory_order_acquire);
+
     // ULTRA-OPTIMIZED RCU READ PATTERN FOR READ-HEAVY WORKLOADS:
     // Eliminate ALL overhead in the common case to match MapWithLock performance
 
@@ -688,6 +696,9 @@ Value *RcuMap<Key, Value>::Get(const Key &key, bool update_access_time) {
         }
         return &(it->second.value_);
     }
+
+    // RCU: temporarily release reader count while checking dirty_map under lock
+    rcu_reader_count_.fetch_sub(1, std::memory_order_release);
 
     // PHASE 2: Check dirty_map for recent writes (SLOW PATH - MINIMIZED)
     // This path should be rare in read-heavy workloads
@@ -740,21 +751,25 @@ std::optional<Value> RcuMap<Key, Value>::GetValue(const Key &key, bool update_ac
 
 template <typename Key, typename Value>
 Value *RcuMap<Key, Value>::GetWithRcuTime(const Key &key) {
+    // RCU read protection
+    rcu_reader_count_.fetch_add(1, std::memory_order_acquire);
+
     // ABSOLUTE FASTEST PATH: Zero overhead reads for maximum performance
-    // This should be as fast as MapWithLock::Get() with shared_lock
     InnerMap *current_read = read_map_;
     auto it = current_read->find(key);
 
     if (it != current_read->end()) {
+        rcu_reader_count_.fetch_sub(1, std::memory_order_release);
         return &(it->second.value_);
     }
+
+    rcu_reader_count_.fetch_sub(1, std::memory_order_release);
 
     // Inline dirty_map check to avoid function call overhead
     {
         std::lock_guard<std::mutex> lock(dirty_lock_);
         auto dirty_it = dirty_map_->find(key);
         if (dirty_it != dirty_map_->end()) {
-            // No access time updates, no miss tracking - pure read performance
             return &(dirty_it->second.value_);
         }
     }
@@ -764,18 +779,18 @@ Value *RcuMap<Key, Value>::GetWithRcuTime(const Key &key) {
 
 template <typename Key, typename Value>
 Value *RcuMap<Key, Value>::GetReadOnly(const Key &key) {
-    // BENCHMARK-OPTIMIZED READ: Absolute minimum overhead
-    // This method is designed to match MapWithLock performance exactly
-    // by eliminating ALL RCU-specific overhead
+    // RCU read protection
+    rcu_reader_count_.fetch_add(1, std::memory_order_acquire);
 
-    // Try read_map first (should succeed in most cases for read-heavy workloads)
     InnerMap *current_read = read_map_;
     auto it = current_read->find(key);
     if (it != current_read->end()) {
+        rcu_reader_count_.fetch_sub(1, std::memory_order_release);
         return &(it->second.value_);
     }
 
-    // If not found, try dirty_map (minimal overhead)
+    rcu_reader_count_.fetch_sub(1, std::memory_order_release);
+
     std::lock_guard<std::mutex> lock(dirty_lock_);
     auto dirty_it = dirty_map_->find(key);
     if (dirty_it != dirty_map_->end()) {
@@ -825,6 +840,12 @@ void RcuMap<Key, Value>::CheckSwapInLock() {
 
     // std::set up new dirty_map for future writes
     dirty_map_ = new_dirty_map;
+
+    // RCU SYNCHRONIZATION: Wait for all readers that saw the OLD read_map_ to finish.
+    // Without this, a reader could still be iterating the old map when CheckGc frees it.
+    while (rcu_reader_count_.load(std::memory_order_acquire) > 0) {
+        std::this_thread::yield();
+    }
 
     // Schedule old read_map for garbage collection
     // Cannot delete immediately - readers may still be using it
@@ -929,6 +950,12 @@ void RcuMap<Key, Value>::CheckGc(u64 min_delete_time) {
     }
 
     for (auto &deleted_map : map_need_delete) {
+        // RCU: Wait for any in-flight readers to finish before freeing old maps.
+        // CheckSwapInLock already waited, but there may be readers that started before
+        // the swap and haven't finished yet.
+        while (rcu_reader_count_.load(std::memory_order_acquire) > 0) {
+            std::this_thread::yield();
+        }
         delete deleted_map.deleted_entries_;
         delete deleted_map.map_;
     }
@@ -991,6 +1018,8 @@ void RcuMap<Key, Value>::emplace(const Key &key, Args &&...args) {
 
 template <typename Key, typename Value>
 u32 RcuMap<Key, Value>::range(const Key &key_min, const Key &key_max, std::vector<Value> &result) const {
+    rcu_reader_count_.fetch_add(1, std::memory_order_acquire);
+
     InnerMap *current_read = read_map_;
     auto read_begin = current_read->lower_bound(key_min);
     auto read_end = current_read->upper_bound(key_max);
@@ -1027,6 +1056,7 @@ u32 RcuMap<Key, Value>::range(const Key &key_min, const Key &key_max, std::vecto
         ++read_it;
     }
 
+    rcu_reader_count_.fetch_sub(1, std::memory_order_release);
     return count;
 }
 
@@ -1081,6 +1111,8 @@ template <typename Key, typename Value>
 void RcuMap<Key, Value>::Range(const Key &key_min, const Key &key_max, std::vector<std::pair<Key, Value>> &items) {
     items.clear();
 
+    rcu_reader_count_.fetch_add(1, std::memory_order_acquire);
+
     InnerMap *current_read = read_map_;
     auto read_begin = current_read->lower_bound(key_min);
     auto read_end = current_read->upper_bound(key_max);
@@ -1109,6 +1141,8 @@ void RcuMap<Key, Value>::Range(const Key &key_min, const Key &key_max, std::vect
             items.emplace_back(it->first, it->second.value_);
         }
     }
+
+    rcu_reader_count_.fetch_sub(1, std::memory_order_release);
 }
 
 template <typename Key, typename Value>
