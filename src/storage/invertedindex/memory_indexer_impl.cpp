@@ -175,6 +175,9 @@ void MemoryIndexer::Insert(std::shared_ptr<ColumnVector> column_vector, u32 row_
                 inverter->Sort();
                 this->ring_sorted_.Put(task->task_seq_, inverter);
                 success = true;
+                // Proactively drain the ring to prevent deadlock when the ring fills up.
+                // CommitSync uses try_lock so it is safe and non-blocking if another thread is already committing.
+                CommitSync(100);
                 // LOG_INFO(fmt::format("online inverter {} end", id));
             } catch (const std::exception &e) {
                 LOG_ERROR(fmt::format("Insert(online) invert task failed, seq={}, error: {}", task->task_seq_, e.what()));
@@ -246,6 +249,9 @@ void MemoryIndexer::AsyncInsertBottom(const std::shared_ptr<ColumnVector> &colum
             inverter->MergePrepare();
             inverter->Sort();
             this->ring_sorted_.Put(task->task_seq_, inverter);
+            // Proactively drain the ring to prevent deadlock when the ring fills up.
+            // CommitSync uses try_lock so it is safe and non-blocking if another thread is already committing.
+            CommitSync(100);
         } catch (const std::exception &e) {
             std::string sample_data;
             for (u32 i = 0; i < std::min(task->row_count_, 3u); ++i) {
@@ -336,11 +342,16 @@ std::unique_ptr<std::binary_semaphore> MemoryIndexer::AsyncInsert(std::shared_pt
             LOG_ERROR(fmt::format("AsyncInsert invert task failed, seq={}, unknown error", task->task_seq_));
         }
         if (success) {
+            // Release transaction semaphores now - the data is in the ring and
+            // will be consumed by CommitSync asynchronously.  Waiting on the
+            // semaphore until CommitSync processes this entry is fragile:
+            // a gap in the ring (earlier seq unfinished) prevents GetBatch
+            // from reaching us, so CommitSync may return 0 and the semaphore
+            // is never released.
+            for (auto *sema : inverter->semas()) {
+                sema->release();
+            }
             if (CommitSync(100) == 0) {
-                // Another committer may have owned mutex_commit_ while this
-                // task published its inverter. Requeue a background commit so
-                // the ring is eventually drained and transaction semaphores
-                // are released.
                 Commit(false);
             }
         } else {
