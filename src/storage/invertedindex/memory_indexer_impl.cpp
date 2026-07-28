@@ -175,16 +175,17 @@ void MemoryIndexer::Insert(std::shared_ptr<ColumnVector> column_vector, u32 row_
                 inverter->Sort();
                 this->ring_sorted_.Put(task->task_seq_, inverter);
                 success = true;
-                // Proactively drain the ring to prevent deadlock when the ring fills up.
-                // CommitSync uses try_lock so it is safe and non-blocking if another thread is already committing.
-                CommitSync(100);
                 // LOG_INFO(fmt::format("online inverter {} end", id));
             } catch (const std::exception &e) {
                 LOG_ERROR(fmt::format("Insert(online) invert task failed, seq={}, error: {}", task->task_seq_, e.what()));
             } catch (...) {
                 LOG_ERROR(fmt::format("Insert(online) invert task failed, seq={}, unknown error", task->task_seq_));
             }
-            if (!success) {
+            if (success) {
+                // Proactively drain the ring to prevent deadlock when the ring fills up.
+                // CommitSync uses try_lock so it is safe and non-blocking if another thread is already committing.
+                CommitSync(100);
+            } else {
                 std::unique_lock lock(mutex_);
                 --inflight_tasks_;
                 if (inflight_tasks_ == 0) {
@@ -342,22 +343,16 @@ std::unique_ptr<std::binary_semaphore> MemoryIndexer::AsyncInsert(std::shared_pt
             LOG_ERROR(fmt::format("AsyncInsert invert task failed, seq={}, unknown error", task->task_seq_));
         }
         if (success) {
-            // Release transaction semaphores now - the data is in the ring and
-            // will be consumed by CommitSync asynchronously.  Waiting on the
-            // semaphore until CommitSync processes this entry is fragile:
-            // a gap in the ring (earlier seq unfinished) prevents GetBatch
-            // from reaching us, so CommitSync may return 0 and the semaphore
-            // is never released.
-            for (auto *sema : inverter->semas()) {
-                sema->release();
-            }
+            // Release semaphores only after data is actually committed.
+            // CommitSync generates postings and releases semaphores inside.
+            // If CommitSync returns 0 (ring gap or try_lock failed), release
+            // semaphores here to prevent deadlock and schedule a retry.
             if (CommitSync(100) == 0) {
+                inverter->ReleaseSemas();
                 Commit(false);
             }
         } else {
-            for (auto *sema : inverter->semas()) {
-                sema->release();
-            }
+            inverter->ReleaseSemas();
             std::unique_lock lock(mutex_);
             --inflight_tasks_;
             if (inflight_tasks_ == 0) {
@@ -443,11 +438,7 @@ size_t MemoryIndexer::CommitSync(size_t wait_if_empty_ms) {
             mem_usage_change.Add(inverter->GeneratePosting());
             num_generated += inverter->GetMerged();
 
-            if (const auto &semas = inverter->semas(); !semas.empty()) {
-                for (auto sema : semas) {
-                    sema->release();
-                }
-            }
+            inverter->ReleaseSemas();
         }
     }
     if (num_generated > 0) {

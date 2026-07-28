@@ -760,6 +760,7 @@ Value *RcuMap<Key, Value>::GetWithRcuTime(const Key &key) {
     auto it = current_read->find(key);
 
     if (it != current_read->end()) {
+        rcu_reader_count_.fetch_sub(1, std::memory_order_release);
         return &(it->second.value_);
     }
 
@@ -785,6 +786,7 @@ Value *RcuMap<Key, Value>::GetReadOnly(const Key &key) {
     InnerMap *current_read = read_map_;
     auto it = current_read->find(key);
     if (it != current_read->end()) {
+        rcu_reader_count_.fetch_sub(1, std::memory_order_release);
         return &(it->second.value_);
     }
 
