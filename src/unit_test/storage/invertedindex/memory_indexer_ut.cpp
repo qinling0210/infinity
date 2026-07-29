@@ -223,13 +223,13 @@ TEST_P(MemoryIndexerTest, DISABLED_SLOW_Memory) {
 }
 
 TEST_P(MemoryIndexerTest, SpillLoadTest) {
-    auto indexer1 = std::make_shared<MemoryIndexer>(GetFullDataDir(), "chunk1", RowID(0U, 0U), flag_, "standard");
+    auto indexer1 = std::make_unique<MemoryIndexer>(GetFullDataDir(), "chunk1", RowID(0U, 0U), flag_, "standard");
     std::shared_ptr<ColumnVector> column_vector = MakeColumnVector(wiki_paragraphs_);
     indexer1->Insert(column_vector, 0, 2);
     indexer1->Insert(column_vector, 2, 2);
     indexer1->Insert(column_vector, 4, 1);
     indexer1->Dump(false, true);
-    std::shared_ptr<MemoryIndexer> loaded_indexer = std::make_shared<MemoryIndexer>(GetFullDataDir(), "chunk1", RowID(0U, 0U), flag_, "standard");
+    std::unique_ptr<MemoryIndexer> loaded_indexer = std::make_unique<MemoryIndexer>(GetFullDataDir(), "chunk1", RowID(0U, 0U), flag_, "standard");
 
     loaded_indexer->Load();
     SegmentID segment_id = 0;
@@ -268,15 +268,15 @@ TEST_P(MemoryIndexerTest, DISABLED_SLOW_SeekPosition) {
         column->AppendValue(v);
     }
 
-    auto indexer1 = std::make_shared<MemoryIndexer>(GetFullDataDir(), "chunk1", RowID(0U, 0U), flag_, "standard");
-    indexer1->Insert(column, 0, 8192);
-    while (indexer1->GetInflightTasks() > 0) {
+    MemoryIndexer indexer1(GetFullDataDir(), "chunk1", RowID(0U, 0U), flag_, "standard");
+    indexer1.Insert(column, 0, 8192);
+    while (indexer1.GetInflightTasks() > 0) {
         sleep(1);
-        indexer1->CommitSync();
+        indexer1.CommitSync();
     }
 
     SegmentID segment_id = 0;
-    auto segment_reader = std::make_shared<InMemIndexSegmentReader>(segment_id, indexer1.get());
+    auto segment_reader = std::make_shared<InMemIndexSegmentReader>(segment_id, &indexer1);
     const std::string term("a");
     SegmentPosting seg_posting;
     auto seg_postings = std::make_shared<std::vector<SegmentPosting>>();
