@@ -297,6 +297,9 @@ std::tuple<bool, std::string> JsonManager::json_extract_string(const JsonTypeDef
     if (current->is_string()) {
         return {true, current->get<std::string>()};
     }
+    if (current->is_null()) {
+        return {false, ""};
+    }
     return {true, current->dump()};
 }
 
