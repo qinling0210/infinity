@@ -220,7 +220,7 @@ class TestInfinity:
             {'json_extract(c3, $.2)': 'string'}))
         res, extra_res = table_obj.output(["json_extract_string(c3,'$.2')"]).to_pl()
         pd.testing.assert_frame_equal(res.to_pandas().astype('string'), pd.DataFrame(
-            {'json_extract_string(c3, $.2)': ('3232', '"10"')}).astype(
+            {'json_extract_string(c3, $.2)': ('3232', '10')}).astype(
             {'json_extract_string(c3, $.2)': 'string'}))
         res, extra_res = table_obj.output(["json_extract_int(c3,'$.2')"]).to_pl()
         pd.testing.assert_frame_equal(res.to_pandas().astype('Int32'), pd.DataFrame(
@@ -296,7 +296,7 @@ class TestInfinity:
         res, _ = table_obj.output(["json_extract_string(c3,'$.name')"]).to_pl()
         pd.testing.assert_frame_equal(
             res.to_pandas(),
-            pd.DataFrame({'json_extract_string(c3, $.name)': ('"测试"',)})
+            pd.DataFrame({'json_extract_string(c3, $.name)': ('测试',)})
         )
 
         res, _ = table_obj.output(["json_extract_double(c3,'$.value')"]).to_pl()
@@ -328,19 +328,19 @@ class TestInfinity:
         res, _ = table_obj.output(["json_extract_string(c3,'$[0]')"]).to_pl()
         pd.testing.assert_frame_equal(
             res.to_pandas().astype('string'),
-            pd.DataFrame({'json_extract_string(c3, $[0])': (pd.NA, '"电商"')}, dtype='string')
+            pd.DataFrame({'json_extract_string(c3, $[0])': (pd.NA, '电商')}, dtype='string')
         )
 
         res, _ = table_obj.output(["json_extract_string(c3,'$[1]')"]).to_pl()
         pd.testing.assert_frame_equal(
             res.to_pandas().astype('string'),
-            pd.DataFrame({'json_extract_string(c3, $[1])': (pd.NA, '"美妆"')}, dtype='string')
+            pd.DataFrame({'json_extract_string(c3, $[1])': (pd.NA, '美妆')}, dtype='string')
         )
 
         res, _ = table_obj.output(["json_extract_string(c3,'$[2]')"]).to_pl()
         pd.testing.assert_frame_equal(
             res.to_pandas().astype('string'),
-            pd.DataFrame({'json_extract_string(c3, $[2])': (pd.NA, '"母婴"')}, dtype='string')
+            pd.DataFrame({'json_extract_string(c3, $[2])': (pd.NA, '母婴')}, dtype='string')
         )
 
         # Test out of bounds index
@@ -411,14 +411,14 @@ class TestInfinity:
         res, _ = table_obj.output(["json_extract_string(c3,'$[1]')"]).to_pl()
         pd.testing.assert_frame_equal(
             res.to_pandas().astype('string'),
-            pd.DataFrame({'json_extract_string(c3, $[1])': (pd.NA, '"美妆"', pd.NA, '"two"')}, dtype='string')
+            pd.DataFrame({'json_extract_string(c3, $[1])': (pd.NA, '美妆', pd.NA, 'two')}, dtype='string')
         )
 
         # Use json_extract_string for double to avoid None conversion issues
         res, _ = table_obj.output(["json_extract_string(c3,'$[2]')"]).to_pl()
         pd.testing.assert_frame_equal(
             res.to_pandas(),
-            pd.DataFrame({'json_extract_string(c3, $[2])': (None, '"母婴"', None, '3.0')})
+            pd.DataFrame({'json_extract_string(c3, $[2])': (None, '母婴', None, '3.0')})
         )
 
         res, _ = table_obj.output(["json_extract_bool(c3,'$[3]')"]).to_pl()
@@ -469,7 +469,7 @@ class TestInfinity:
         res, _ = table_obj.output(["json_extract_string(c3,'$[0].name')"]).to_pl()
         pd.testing.assert_frame_equal(
             res.to_pandas(),
-            pd.DataFrame({'json_extract_string(c3, $[0].name)': (None, None, None, None, '"张三"')})
+            pd.DataFrame({'json_extract_string(c3, $[0].name)': (None, None, None, None, '张三')})
         )
 
         res, _ = table_obj.output(["json_extract_int(c3,'$[0].age')"]).to_pl()
@@ -482,7 +482,7 @@ class TestInfinity:
         res, _ = table_obj.output(["json_extract_string(c3,'$[1].name')"]).to_pl()
         pd.testing.assert_frame_equal(
             res.to_pandas(),
-            pd.DataFrame({'json_extract_string(c3, $[1].name)': (None, None, None, None, '"李四"')})
+            pd.DataFrame({'json_extract_string(c3, $[1].name)': (None, None, None, None, '李四')})
         )
 
         res, _ = table_obj.output(["json_extract_int(c3,'$[1].age')"]).to_pl()
@@ -617,7 +617,7 @@ class TestInfinity:
         res, _ = table_obj.output(["json_extract_string(c3,'$.level1.level2.level3.level4')"]).to_pl()
         pd.testing.assert_frame_equal(
             res.to_pandas(),
-            pd.DataFrame({'json_extract_string(c3, $.level1.level2.level3.level4)': (None, None, None, None, None, None, None, None, None, '"deep_value"')})
+            pd.DataFrame({'json_extract_string(c3, $.level1.level2.level3.level4)': (None, None, None, None, None, None, None, None, None, 'deep_value')})
         )
 
         res, _ = table_obj.output(["json_exists_path(c3,'$.level1.level2.level3')"]).to_pl()
