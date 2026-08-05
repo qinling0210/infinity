@@ -122,6 +122,7 @@ struct NewTxnCompactState {
         if (block_meta_) {
             block_row_cnts_.push_back(cur_block_row_cnt_);
             segment_row_cnt_ += cur_block_row_cnt_;
+            size_t null_size = (block_meta_->block_capacity() + 7) / 8;
             for (ColumnID i = 0; i < column_cnt_; ++i) {
                 ColumnMeta column_meta(i, *block_meta_);
                 BufferObj *buffer_obj = nullptr;
@@ -136,6 +137,21 @@ struct NewTxnCompactState {
                 if (!status2.ok()) {
                     return status;
                 }
+
+                // Write null bitmap at offset data_cap_size in the buffer before saving.
+                // The buffer's null bitmap region was allocated but never populated during
+                // compact's AppendWith, so we must explicitly write the bits from the
+                // in-memory nulls_ptr_.  Otherwise all bits remain zero (= all rows NULL),
+                // causing PopulateSecondaryIndexInner to skip every row.
+                size_t data_cap_size = data_size - null_size;
+                u8 *null_bitmap = reinterpret_cast<u8 *>(column_vectors_[i].buffer_->GetDataMut()) + data_cap_size;
+                std::memset(null_bitmap, 0, null_size);
+                for (size_t j = 0; j < cur_block_row_cnt_; ++j) {
+                    if (column_vectors_[i].nulls_ptr_->IsTrue(j)) {
+                        null_bitmap[j / 8] |= static_cast<u8>(1u << (j % 8));
+                    }
+                }
+
                 buffer_obj->SetDataSize(data_size);
 
                 buffer_obj->Save();

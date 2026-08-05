@@ -687,6 +687,7 @@ EMVBIndex &EMVBIndex::operator=(EMVBIndex &&other) {
     n_docs_ = other_n_docs;
     MOVE_MEMBER(n_total_embeddings_);
     MOVE_MEMBER(doc_lens_);
+    MOVE_MEMBER(doc_segment_offsets_);
     MOVE_MEMBER(doc_offsets_);
     MOVE_MEMBER(centroid_id_assignments_);
     MOVE_MEMBER(centroids_to_docid_);
