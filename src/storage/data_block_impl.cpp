@@ -222,6 +222,15 @@ void DataBlock::Finalize() {
     }
 }
 
+void DataBlock::Finalize(size_t explicit_row_count) {
+    row_count_ = explicit_row_count;
+    finalized = true;
+    initialized = true;
+    if (capacity_ == 0) {
+        capacity_ = explicit_row_count;
+    }
+}
+
 std::string DataBlock::ToString() const {
     std::stringstream ss;
     for (size_t idx = 0; idx < column_count_; ++idx) {

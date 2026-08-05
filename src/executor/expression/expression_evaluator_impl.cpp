@@ -173,6 +173,21 @@ void ExpressionEvaluator::Execute(const std::shared_ptr<FunctionExpression> &exp
     DataBlock func_input_data_block;
     if (!expr->nullary_) {
         func_input_data_block.Init(arguments);
+        // When all child arguments are kConstant (e.g. NULL AND NULL),
+        // Init() infers row_count_ from the vectors' tail_index_ (= 1),
+        // but the true row count comes from input_data_block_.
+        if (input_data_block_ != nullptr) {
+            bool all_constant = true;
+            for (auto &arg : arguments) {
+                if (arg->vector_type() != ColumnVectorType::kConstant) {
+                    all_constant = false;
+                    break;
+                }
+            }
+            if (all_constant) {
+                func_input_data_block.Finalize(input_data_block_->row_count());
+            }
+        }
     }
 
     expr->func_.function_(func_input_data_block, output_column_vector);

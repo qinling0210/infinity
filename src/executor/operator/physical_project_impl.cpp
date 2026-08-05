@@ -138,7 +138,22 @@ bool PhysicalProject::Execute(QueryContext *, OperatorState *operator_state) {
                     }
                 }
             }
-            output_data_block->Finalize();
+            const size_t in_row_count = input_data_block->row_count();
+            bool all_output_kconstant = true;
+            for (const auto &col_vec : output_data_block->column_vectors_) {
+                if (col_vec->vector_type() != ColumnVectorType::kConstant) {
+                    all_output_kconstant = false;
+                    break;
+                }
+            }
+            if (all_output_kconstant) {
+                // kConstant vectors use tail_index_ == 1 as a broadcast signal
+                // rather than the actual row count, so Finalize() would infer 1 row.
+                // Pass the true row count from the input DataBlock instead.
+                output_data_block->Finalize(in_row_count);
+            } else {
+                output_data_block->Finalize();
+            }
         }
 
         //    if (prev_op_state->Complete() && !prev_op_state->data_block_->Finalized()) {
