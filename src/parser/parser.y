@@ -3922,6 +3922,10 @@ constant_expr: STRING {
     const_expr->bool_value_ = false;
     $$ = const_expr;
 }
+| NULLABLE {
+    infinity::ConstantExpr* const_expr = new infinity::ConstantExpr(infinity::LiteralType::kNull);
+    $$ = const_expr;
+}
 | DOUBLE_VALUE {
     infinity::ConstantExpr* const_expr = new infinity::ConstantExpr(infinity::LiteralType::kDouble);
     const_expr->double_value_ = $1;

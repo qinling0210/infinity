@@ -181,10 +181,16 @@ void ExpressionEvaluator::Execute(const std::shared_ptr<FunctionExpression> &exp
 void ExpressionEvaluator::Execute(const std::shared_ptr<ValueExpression> &expr,
                                   std::shared_ptr<ExpressionState> &,
                                   std::shared_ptr<ColumnVector> &output_column_vector) {
-    // memory copy here.
+    // A kConstant vector logically represents the same value for every
+    // output row.  Write the constant value once at index 0 and finalize
+    // with the actual row count so that the DataBlock sees the correct
+    // number of rows; the vector_type remains kConstant, so downstream
+    // operators dispatch to the correct path (e.g. FCC) and only ever
+    // read index 0.  This correctly handles null values as well.
     auto value = expr->GetValue();
     output_column_vector->SetValueByIndex(0, value);
-    output_column_vector->Finalize(1);
+    size_t row_count = (input_data_block_ != nullptr) ? input_data_block_->row_count() : 1;
+    output_column_vector->Finalize(row_count);
 }
 
 void ExpressionEvaluator::Execute(const std::shared_ptr<ReferenceExpression> &expr,
@@ -212,8 +218,24 @@ void ExpressionEvaluator::Execute(const std::shared_ptr<InExpression> &expr,
 
     // in expression evaluates to a constant
     if (left_state->OutputColumnVector()->vector_type() == ColumnVectorType::kConstant) {
-        bool in_result = (expr->in_type() == InType::kIn) ? expr->Exists(left_state_output->GetValueByIndex(0))
-                                                          : !expr->Exists(left_state_output->GetValueByIndex(0));
+        bool in_result;
+        // NOT IN with NULL in the list: per SQL standard, can never be true.
+        if (expr->in_type() == InType::kNotIn && expr->has_null_in_list()) {
+            in_result = false;
+        } else if (left_state_output->nulls_ptr_ && !left_state_output->nulls_ptr_->IsTrue(0)) {
+            in_result = false;
+        } else {
+            const Value &left_value = left_state_output->GetValueByIndex(0);
+            // A NULL left operand makes IN / NOT IN evaluate to unknown (not selected).
+            // For IN, ValueSet::Exist already returns false for null.
+            // For NOT IN, a null left operand must also yield false, so we must not merely
+            // negate: !Exists(null) would wrongly become true and select the row.
+            bool found = expr->Exists(left_value);
+            in_result = found;
+            if (expr->in_type() == InType::kNotIn) {
+                in_result = !left_value.IsNull() && !found;
+            }
+        }
         for (size_t idx = 0; idx < input_data_block_->row_count(); idx++) {
             output_column_vector->buffer_->SetCompactBit(idx, in_result);
         }
@@ -222,14 +244,36 @@ void ExpressionEvaluator::Execute(const std::shared_ptr<InExpression> &expr,
     }
     if (expr->in_type() == InType::kIn) {
         for (size_t idx = 0; idx < input_data_block_->row_count(); idx++) {
-            output_column_vector->buffer_->SetCompactBit(idx, expr->Exists(left_state_output->GetValueByIndex(idx)));
+            if (left_state_output->nulls_ptr_ && !left_state_output->nulls_ptr_->IsTrue(idx)) {
+                output_column_vector->buffer_->SetCompactBit(idx, false);
+                continue;
+            }
+            const Value &left_value = left_state_output->GetValueByIndex(idx);
+            bool in_result = expr->Exists(left_value);
+            output_column_vector->buffer_->SetCompactBit(idx, in_result);
         }
         output_column_vector->Finalize(input_data_block_->row_count());
         return;
     }
     if (expr->in_type() == InType::kNotIn) {
+        // NOT IN with NULL in the list: per SQL standard, can never be true.
+        if (expr->has_null_in_list()) {
+            for (size_t idx = 0; idx < input_data_block_->row_count(); idx++) {
+                output_column_vector->buffer_->SetCompactBit(idx, false);
+            }
+            output_column_vector->Finalize(input_data_block_->row_count());
+            return;
+        }
         for (size_t idx = 0; idx < input_data_block_->row_count(); idx++) {
-            output_column_vector->buffer_->SetCompactBit(idx, !expr->Exists(left_state_output->GetValueByIndex(idx)));
+            // A NULL left operand makes NOT IN evaluate to unknown (not selected).
+            if (left_state_output->nulls_ptr_ && !left_state_output->nulls_ptr_->IsTrue(idx)) {
+                output_column_vector->buffer_->SetCompactBit(idx, false);
+                continue;
+            }
+            const Value &left_value = left_state_output->GetValueByIndex(idx);
+            bool found = expr->Exists(left_value);
+            bool in_result = !found;
+            output_column_vector->buffer_->SetCompactBit(idx, in_result);
         }
         output_column_vector->Finalize(input_data_block_->row_count());
         return;

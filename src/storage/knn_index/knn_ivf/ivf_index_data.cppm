@@ -35,6 +35,8 @@ public:
     virtual const char *GetEmbedding(size_t offset) = 0;
 
     virtual std::pair<std::span<const char>, size_t> GetMultiVector(size_t offset) = 0;
+
+    virtual bool IsNull(size_t offset) = 0;
 };
 
 export class IVFIndexInChunk : protected IVF_Index_Storage {

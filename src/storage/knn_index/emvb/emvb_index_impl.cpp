@@ -122,6 +122,9 @@ void EMVBIndex::BuildEMVBIndex(const RowID base_rowid, const u32 row_count, Segm
                     tensor_ptr = reinterpret_cast<const TensorT *>(column_vector.data());
                 }
             }
+            if (column_vector.nulls_ptr_ && !column_vector.nulls_ptr_->IsTrue(block_offset)) {
+                continue;
+            }
             const auto [embedding_num, chunk_offset] = tensor_ptr[block_offset];
             embedding_count += embedding_num;
             for (u32 j = 0; j < embedding_num; ++j) {
@@ -242,6 +245,9 @@ void EMVBIndex::BuildEMVBIndex(const RowID base_rowid, const u32 row_count, Segm
                                                                 ColumnVectorMode::kReadOnly,
                                                                 column_vector);
                 }
+            }
+            if (column_vector.nulls_ptr_ && !column_vector.nulls_ptr_->IsTrue(block_offset)) {
+                continue;
             }
             auto [raw_data, embedding_num] = column_vector.GetTensorRaw(block_offset);
             AddOneDocEmbeddings(reinterpret_cast<const f32 *>(raw_data.data()), embedding_num);

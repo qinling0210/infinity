@@ -133,3 +133,33 @@ UPDATE t2 SET c1 = 1 WHERE c2 = true;
 
 statement ok
 DROP TABLE T2;
+
+# Test UPDATE with NOT NULL constraint violation
+
+statement ok
+DROP TABLE IF EXISTS t_not_null;
+
+statement ok
+CREATE TABLE t_not_null (c1 INTEGER NOT NULL, c2 INTEGER);
+
+statement ok
+INSERT INTO t_not_null VALUES (1, 10);
+
+statement error
+UPDATE t_not_null SET c1 = NULL WHERE c1 = 1;
+
+query I
+SELECT * FROM t_not_null;
+----
+1 10
+
+statement ok
+UPDATE t_not_null SET c2 = NULL WHERE c1 = 1;
+
+query I
+SELECT * FROM t_not_null;
+----
+1 null
+
+statement ok
+DROP TABLE t_not_null;

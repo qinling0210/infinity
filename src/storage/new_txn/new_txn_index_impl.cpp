@@ -1759,6 +1759,13 @@ Status NewTxn::PopulateHnswIndexInner(std::shared_ptr<IndexBase> index_base,
         }
     }
 
+    // When the segment has no blocks (all rows deleted, etc.), there is
+    // nothing to populate.  Return early instead of crashing below with
+    // "Invalid mem index".
+    if (is_null) {
+        return Status::OK();
+    }
+
     std::optional<ChunkIndexMeta> chunk_index_meta;
 
     ChunkID new_chunk_id = 0;
@@ -2499,6 +2506,24 @@ Status NewTxn::ReplayAlterIndexByParams(WalCmdAlterIndexV2 *alter_index_cmd) {
 }
 
 Status NewTxn::DumpSegmentMemIndex(SegmentIndexMeta &segment_index_meta, const ChunkID &new_chunk_id) {
+    // Check index type before popping mem index. For EMVB, if the index is not built yet,
+    // we must not pop it — the mem index must stay in the catalog so that searches can still
+    // fall back to exhaustive scan on the small (unbuilt) mem index.
+    auto &table_index_meta = segment_index_meta.table_index_meta();
+    auto [index_base, index_status] = table_index_meta.GetIndexBase();
+    if (!index_status.ok()) {
+        return index_status;
+    }
+    if (index_base->index_type_ == IndexType::kEMVB) {
+        auto check_mem_index = segment_index_meta.GetMemIndex();
+        if (check_mem_index != nullptr) {
+            auto check_emvb = check_mem_index->GetEMVBIndex();
+            if (check_emvb != nullptr && !check_emvb->IsBuilt()) {
+                return Status::EmptyMemIndex();
+            }
+        }
+    }
+
     auto mem_index = segment_index_meta.PopMemIndex();
     if (mem_index == nullptr ||
         (mem_index->GetBaseMemIndex() == nullptr && mem_index->GetEMVBIndex() == nullptr && mem_index->GetSMVEIndex() == nullptr)) {
@@ -2506,11 +2531,6 @@ Status NewTxn::DumpSegmentMemIndex(SegmentIndexMeta &segment_index_meta, const C
     }
     mem_index->WaitUpdate();
     LOG_TRACE(fmt::format("NewTxn::DumpSegmentMemIndex WaitUpdate mem_index {:p}", static_cast<void *>(mem_index.get())));
-    auto &table_index_meta = segment_index_meta.table_index_meta();
-    auto [index_base, index_status] = table_index_meta.GetIndexBase();
-    if (!index_status.ok()) {
-        return index_status;
-    }
 
     std::shared_ptr<SecondaryIndexInMem> memory_secondary_index;
     std::shared_ptr<IVFIndexInMem> memory_ivf_index;

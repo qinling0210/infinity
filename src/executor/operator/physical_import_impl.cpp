@@ -682,7 +682,14 @@ void PhysicalImport::NewCSVRowHandler(void *context_raw_ptr) {
         }
         std::shared_ptr<ColumnDef> column_def = parser_context->GetColumnDef(column_idx);
         if (column_def->has_default_value()) {
-            auto const_expr = dynamic_cast<ConstantExpr *>(column_def->default_expr_.get());
+            ConstantExpr *const_expr = nullptr;
+            ConstantExpr null_const_expr(LiteralType::kNull);
+            if (column_def->default_expr_ != nullptr) {
+                const_expr = dynamic_cast<ConstantExpr *>(column_def->default_expr_.get());
+            } else {
+                // Implicit NULL default for nullable columns without explicit default.
+                const_expr = &null_const_expr;
+            }
             column_vector.AppendByConstantExpr(const_expr);
         } else {
             Status status = Status::ImportFileFormatError(
@@ -825,6 +832,10 @@ std::shared_ptr<ConstantExpr> BuildConstantExprFromJson(std::string_view object_
                 }
                 return res;
             }
+        }
+        case simdjson::json_type::null: {
+            auto res = std::make_shared<ConstantExpr>(LiteralType::kNull);
+            return res;
         }
         default: {
             const auto error_info = fmt::format("Unrecognized json object type");
@@ -1258,7 +1269,13 @@ void PhysicalImport::JSONLRowHandler(std::string_view line_sv, std::vector<std::
                 }
             }
         } else if (column_def->has_default_value()) {
-            auto const_expr = dynamic_cast<ConstantExpr *>(column_def->default_expr_.get());
+            ConstantExpr *const_expr = nullptr;
+            ConstantExpr null_const_expr(LiteralType::kNull);
+            if (column_def->default_expr_ != nullptr) {
+                const_expr = dynamic_cast<ConstantExpr *>(column_def->default_expr_.get());
+            } else {
+                const_expr = &null_const_expr;
+            }
             column_vector.AppendByConstantExpr(const_expr);
         } else {
             Status status = Status::ImportFileFormatError(fmt::format("Column {} not found in JSON.", column_def->name_));

@@ -262,6 +262,11 @@ void BuildFastRoughFilterTask::BuildOnlyBloomFilter(NewBuildFastRoughFilterArg &
             }
         } else {
             for (size_t block_off = 0; block_off < block_row_cnt; ++block_off) {
+                // Skip NULL values: sentinel values in NULL slots should not
+                // be inserted into the bloom filter.
+                if (!column_vector.nulls_ptr_->IsTrue(block_off)) {
+                    continue;
+                }
                 if constexpr (std::is_same_v<ValueType, VarcharT>) {
                     Value val = column_vector.GetValueByIndex(block_off);
                     const std::string &str = val.GetVarchar();
@@ -335,6 +340,10 @@ void BuildFastRoughFilterTask::BuildOnlyMinMaxFilter(NewBuildFastRoughFilterArg 
         NewTxnBlockVisitor block_visitor(&visit_state);
         for (auto block_off_opt = block_visitor.Next(); block_off_opt; block_off_opt = block_visitor.Next()) {
             BlockOffset block_off = *block_off_opt;
+            // Skip NULL values: NULL rows have no meaningful min/max.
+            if (!column_vector.nulls_ptr_->IsTrue(block_off)) {
+                continue;
+            }
             if constexpr (std::is_same_v<ValueType, VarcharT>) {
                 Value val = column_vector.GetValueByIndex(block_off);
                 const std::string &str = val.GetVarchar();
@@ -409,10 +418,15 @@ void BuildFastRoughFilterTask::BuildMinMaxAndBloomFilter(NewBuildFastRoughFilter
         // step 2. collect data in row, get and update min and max value
         MinMaxInnerValueType block_min_value = std::numeric_limits<MinMaxInnerValueType>::max();
         MinMaxInnerValueType block_max_value = std::numeric_limits<MinMaxInnerValueType>::lowest();
-        for (auto block_off_opt = block_visitor.Next(); block_off_opt; block_visitor.Next()) {
+        for (auto block_off_opt = block_visitor.Next(); block_off_opt; block_off_opt = block_visitor.Next()) {
             BlockOffset block_off = *block_off_opt;
-            Value val = column_vector.GetValueByIndex(block_off);
+            // Skip NULL values: NULL rows have no meaningful min/max and
+            // should not contribute to the bloom filter.
+            if (!column_vector.nulls_ptr_->IsTrue(block_off)) {
+                continue;
+            }
             if constexpr (std::is_same_v<ValueType, VarcharT>) {
+                Value val = column_vector.GetValueByIndex(block_off);
                 const std::string &str = val.GetVarchar();
                 UpdateMin(block_min_value, str);
                 UpdateMax(block_max_value, str);

@@ -110,11 +110,11 @@ def disable_items_with_mark(items, mark, reason):
         if mark in item.keywords:
             item.add_marker(skipper)
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def http(request):
     return request.config.getoption("--http")
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def suffix(request):
     if request.config.getoption("--http"):
         return "_http"
