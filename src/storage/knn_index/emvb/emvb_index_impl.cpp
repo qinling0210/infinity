@@ -709,10 +709,11 @@ void EMVBIndex::ReadIndexInner(LocalFileHandle &file_handle) {
         n_docs_ = n_docs;
         file_handle.Read(&n_total_embeddings_, sizeof(n_total_embeddings_));
         DeSerialize(file_handle, doc_lens_, n_docs);
-        // v0 did not write doc_segment_offsets_; initialize with start_segment_offset_ for all docs
-        // since v0 indexes only contained documents from a single segment.
+        // v0 did not write doc_segment_offsets_; v0 builds skipped no rows,
+        // so document i maps to start_segment_offset_ + i.
         {
-            const std::vector<u32> seg_offsets(n_docs, start_segment_offset_);
+            std::vector<u32> seg_offsets(n_docs);
+            std::iota(seg_offsets.begin(), seg_offsets.end(), start_segment_offset_);
             doc_segment_offsets_.PushBack(seg_offsets.begin(), seg_offsets.end());
         }
         DeSerialize(file_handle, doc_offsets_, n_docs);
