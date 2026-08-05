@@ -1340,3 +1340,121 @@ SELECT UNNEST(c2) FROM test_unnest_json WHERE c1 = 15;
 
 statement ok
 DROP TABLE test_unnest_json;
+
+# ============================================================================
+# Part 22: JSON Extracted Values with IN / NOT IN Expressions
+# ============================================================================
+
+statement ok
+DROP TABLE IF EXISTS test_json_in;
+
+statement ok
+CREATE TABLE test_json_in (id INTEGER, meta JSON);
+
+statement ok
+INSERT INTO test_json_in VALUES
+(1, '{"department": "IB", "year": 2020, "score": 2.5}'),
+(2, '{"department": "SOC", "year": 2020, "score": 3.0}'),
+(3, '{"department": "IB", "year": 2021, "score": 1.0}'),
+(4, '{"department": "CS", "year": 2022, "score": 4.0}'),
+(5, '{"year": 2023, "score": 5.0}'),
+(6, '{"department": "IB", "year": 2024, "score": null}'),
+(7, '{"department": null, "year": 2025, "score": 6.0}'),
+(8,'{}');
+
+# json_extract_string with IN
+query I
+SELECT id FROM test_json_in WHERE json_extract_string(meta, '$.department') IN ('IB', 'SOC') ORDER BY id;
+----
+1
+2
+3
+6
+
+# json_extract_string with IN (single value)
+query I
+SELECT id FROM test_json_in WHERE json_extract_string(meta, '$.department') IN ('CS') ORDER BY id;
+----
+4
+
+# json_extract_string with NOT IN
+query I
+SELECT id FROM test_json_in WHERE json_extract_string(meta, '$.department') NOT IN ('IB', 'SOC') ORDER BY id;
+----
+4
+
+# json_extract_int with IN
+query I
+SELECT id FROM test_json_in WHERE json_extract_int(meta, '$.year') IN (2020, 2022) ORDER BY id;
+----
+1
+2
+4
+
+# json_extract_int with NOT IN
+query I
+SELECT id FROM test_json_in WHERE json_extract_int(meta, '$.year') NOT IN (2020, 2022) ORDER BY id;
+----
+3
+5
+6
+7
+
+# json_extract_double with IN
+query I
+SELECT id FROM test_json_in WHERE json_extract_double(meta, '$.score') IN (2.5, 4.0) ORDER BY id;
+----
+1
+4
+
+statement ok
+DROP TABLE test_json_in;
+
+# ============================================================================
+# Part 23: JSON Extracted Values with IS NULL / IS NOT NULL
+# ============================================================================
+
+statement ok
+DROP TABLE IF EXISTS test_json_null;
+
+statement ok
+CREATE TABLE test_json_null (id INTEGER, meta JSON);
+
+statement ok
+INSERT INTO test_json_null VALUES
+(1, '{"department": "IB", "year": 2020, "score": 2.5}'),
+(2, '{"department": "SOC", "year": 2020, "score": 3.0}'),
+(3, '{"department": "IB", "year": 2021, "score": 1.0}'),
+(4, '{"department": "CS", "year": 2022, "score": 4.0}'),
+(5, '{"year": 2023, "score": 5.0}'),
+(6, '{"department": "IB", "year": 2024, "score": null}'),
+(7, '{"department": null, "year": 2025, "score": 6.0}'),
+(8, '{}'),
+(9, null);
+
+query I
+SELECT id FROM test_json_null WHERE meta IS NULL ORDER BY id;
+----
+9
+
+# IS NULL: rows with no "department" key, department=null, or meta=NULL
+query I
+SELECT id FROM test_json_null WHERE json_extract_string(meta, '$.department') IS NULL ORDER BY id;
+----
+5
+7
+8
+9
+
+# IS NOT NULL: rows with non-null department value
+query I
+SELECT id FROM test_json_null WHERE json_extract_string(meta, '$.department') IS NOT NULL ORDER BY id;
+----
+1
+2
+3
+4
+6
+
+statement ok
+DROP TABLE test_json_null;

@@ -1086,6 +1086,11 @@ Status NewTxn::PopulateIndex(const std::string &db_name,
             if (!status.ok()) {
                 return status;
             }
+            if (new_chunk_ids.empty()) {
+                // No non-NULL embedding vectors in this segment; remove the segment from index
+                // so that queries will fall back to brute force search
+                table_index_meta.RemoveSegmentIndexIDs({segment_meta.segment_id()});
+            }
             break;
         }
         case IndexType::kEMVB: {
@@ -1450,7 +1455,15 @@ Status NewTxn::PopulateIvfIndexInner(std::shared_ptr<IndexBase> index_base,
     {
         BufferHandle buffer_handle = buffer_obj->Load();
         auto *data_ptr = static_cast<IVFIndexInChunk *>(buffer_handle.GetDataMut());
-        data_ptr->BuildIVFIndex(segment_meta, row_count, column_def);
+        if (!data_ptr->BuildIVFIndex(segment_meta, row_count, column_def)) {
+            // No non-NULL embedding vectors in this segment; remove the chunk we just allocated.
+            new_chunk_ids.pop_back();
+            status = segment_index_meta.RemoveChunkIDs({chunk_id});
+            if (!status.ok()) {
+                return status;
+            }
+            return Status::OK();
+        }
     }
     buffer_obj->Save();
     return Status::OK();
@@ -1757,6 +1770,13 @@ Status NewTxn::PopulateHnswIndexInner(std::shared_ptr<IndexBase> index_base,
         if (!status.ok()) {
             return status;
         }
+    }
+
+    // When the segment has no blocks (all rows deleted, etc.), there is
+    // nothing to populate.  Return early instead of crashing below with
+    // "Invalid mem index".
+    if (is_null) {
+        return Status::OK();
     }
 
     std::optional<ChunkIndexMeta> chunk_index_meta;
@@ -2499,6 +2519,25 @@ Status NewTxn::ReplayAlterIndexByParams(WalCmdAlterIndexV2 *alter_index_cmd) {
 }
 
 Status NewTxn::DumpSegmentMemIndex(SegmentIndexMeta &segment_index_meta, const ChunkID &new_chunk_id) {
+    // Check index type before popping mem index. For EMVB, if the index is not built yet,
+    // we must not pop it — the mem index must stay in the catalog so that searches can still
+    // fall back to exhaustive scan on the small (unbuilt) mem index.
+    auto &table_index_meta = segment_index_meta.table_index_meta();
+    auto [index_base, index_status] = table_index_meta.GetIndexBase();
+    if (!index_status.ok()) {
+        return index_status;
+    }
+    if (index_base->index_type_ == IndexType::kEMVB) {
+        auto check_mem_index = segment_index_meta.GetMemIndex();
+        if (check_mem_index != nullptr) {
+            auto check_emvb = check_mem_index->GetEMVBIndex();
+            if (check_emvb != nullptr && !check_emvb->IsBuilt()) {
+                check_mem_index->SetIsDumping(false);
+                return Status::EmptyMemIndex();
+            }
+        }
+    }
+
     auto mem_index = segment_index_meta.PopMemIndex();
     if (mem_index == nullptr ||
         (mem_index->GetBaseMemIndex() == nullptr && mem_index->GetEMVBIndex() == nullptr && mem_index->GetSMVEIndex() == nullptr)) {
@@ -2506,11 +2545,6 @@ Status NewTxn::DumpSegmentMemIndex(SegmentIndexMeta &segment_index_meta, const C
     }
     mem_index->WaitUpdate();
     LOG_TRACE(fmt::format("NewTxn::DumpSegmentMemIndex WaitUpdate mem_index {:p}", static_cast<void *>(mem_index.get())));
-    auto &table_index_meta = segment_index_meta.table_index_meta();
-    auto [index_base, index_status] = table_index_meta.GetIndexBase();
-    if (!index_status.ok()) {
-        return index_status;
-    }
 
     std::shared_ptr<SecondaryIndexInMem> memory_secondary_index;
     std::shared_ptr<IVFIndexInMem> memory_ivf_index;

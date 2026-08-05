@@ -53,13 +53,18 @@ public:
 
         if (json_column->vector_type() == ColumnVectorType::kFlat) {
             for (size_t row_index = 0; row_index < row_count; row_index++) {
+                if (json_column->nulls_ptr_ && !json_column->nulls_ptr_->IsTrue(row_index)) {
+                    output_column->AppendValue(MakeValueFunc(T{}));
+                    output_null->Set(row_index, false);
+                    continue;
+                }
                 const auto json_info = json_column_data[row_index];
                 auto json_data = json_column->buffer_->GetVarchar(json_info.file_offset_, json_info.length_);
                 auto json = JsonManager::from_bson(reinterpret_cast<const uint8_t *>(json_data), json_info.length_);
                 auto [exist_path, extracted_value] = ExtractFunc(*json, tokens);
-                output_null->Set(row_index, exist_path);
                 Value v = MakeValueFunc(extracted_value);
                 output_column->AppendValue(v);
+                output_null->Set(row_index, exist_path);
             }
             output_column->Finalize(row_count);
         } else {
