@@ -430,6 +430,7 @@ void BuildFastRoughFilterTask::BuildMinMaxAndBloomFilter(NewBuildFastRoughFilter
                 const std::string &str = val.GetVarchar();
                 UpdateMin(block_min_value, str);
                 UpdateMax(block_max_value, str);
+                input_data.push_back(ConvertValueToU64(str));
             } else {
                 const auto &val = *reinterpret_cast<const ValueType *>(column_vector.GetRawPtr(block_off));
                 UpdateMin(block_min_value, val);

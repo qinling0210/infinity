@@ -514,6 +514,10 @@ std::shared_ptr<BaseExpression> ExpressionBinder::BuildFuncExpr(const FunctionEx
             // is_null / is_not_null check the null bitmap directly; they work with
             // any argument type including parametric types (embedding, tensor, etc.)
             if (scalar_function_set_ptr->name() == "is_null" || scalar_function_set_ptr->name() == "is_not_null") {
+                if (arguments.size() != 1) {
+                    RecoverableError(Status::SyntaxError(
+                        fmt::format("{} requires exactly 1 argument, got {}", scalar_function_set_ptr->name(), arguments.size())));
+                }
                 ScalarFunction scalar_function = scalar_function_set_ptr->GetAllScalarFunctions()[0];
                 scalar_function.parameter_types_[0] = arguments[0]->Type();
                 return std::make_shared<FunctionExpression>(scalar_function, arguments);

@@ -191,6 +191,18 @@ void DataFileWorker::ReadFromFileImpl(size_t file_size, bool from_spill) {
         RecoverableError(status);
     }
 
+    // Handle legacy .col files that were written without a null bitmap.
+    // The file's buffer_size_ reflects only the data region, while this->buffer_size_
+    // (set at construction time) includes the null bitmap. Expand the buffer to the
+    // expected size and fill the null-bitmap region with 0xFF so all rows are valid.
+    if (buffer_size_ < this->buffer_size_) {
+        void *new_data = new char[this->buffer_size_];
+        memcpy(new_data, data_, buffer_size_);
+        memset(static_cast<char *>(new_data) + buffer_size_, 0xFF, this->buffer_size_ - buffer_size_);
+        delete[] static_cast<char *>(data_);
+        data_ = new_data;
+    }
+
     // file footer: checksum
     u64 checksum{0};
     auto [nbytes4, status4] = file_handle_->Read(&checksum, sizeof(checksum));

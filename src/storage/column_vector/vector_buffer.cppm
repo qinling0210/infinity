@@ -102,6 +102,7 @@ public:
 
 private:
     bool initialized_{false};
+    bool null_bitmap_appended_{false};
 
     std::variant<std::unique_ptr<char[]>, BufferHandle> ptr_;
 

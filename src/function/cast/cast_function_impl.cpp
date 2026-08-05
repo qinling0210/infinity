@@ -113,7 +113,10 @@ BoundCastFunc CastFunction::GetBoundFunc(const DataType &source, const DataType 
         case LogicalType::kCircle:
         case LogicalType::kUuid:
         case LogicalType::kRowID:
-        case LogicalType::kMixed:
+        case LogicalType::kMixed: {
+            UnrecoverableError(fmt::format("Can't cast from {} to {}", source.ToString(), target.ToString()));
+            break;
+        }
         case LogicalType::kNull: {
             // Null can be cast to any type by setting all result rows to null.
             return BoundCastFunc([](const std::shared_ptr<ColumnVector> &source,

@@ -1321,7 +1321,7 @@ Status NewTxn::AddColumnsDataInBlock(BlockMeta &block_meta,
 
         auto [data_size, status2] = column_meta->GetColumnSize(row_count, column_def);
         if (!status2.ok()) {
-            return status;
+            return status2;
         }
         if (!has_null_region) {
             data_size = data_cap_size;

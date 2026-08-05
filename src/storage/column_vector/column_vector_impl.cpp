@@ -933,6 +933,8 @@ void ColumnVector::CopyRow(const ColumnVector &other, size_t dst_idx, size_t src
     // Copy null bitmap
     if (!other.nulls_ptr_->IsTrue(src_idx)) {
         this->nulls_ptr_->SetFalse(dst_idx);
+    } else {
+        this->nulls_ptr_->SetTrue(dst_idx);
     }
 }
 
@@ -2716,7 +2718,7 @@ std::shared_ptr<ColumnVector> ColumnVector::ReadAdv(const char *&ptr, i32 maxbyt
     if (maxbytes > 0) {
         column_vector->nulls_ptr_ = Bitmask::ReadAdv(ptr, maxbytes);
     } else {
-        column_vector->nulls_ptr_ = Bitmask::MakeSharedAllTrue(tail_index);
+        column_vector->nulls_ptr_ = Bitmask::MakeSharedAllTrue(DEFAULT_VECTOR_SIZE);
     }
     maxbytes = ptr_end - ptr;
     if (maxbytes < 0) {

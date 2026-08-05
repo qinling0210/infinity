@@ -306,6 +306,12 @@ def traverse_conditions(cons: exp.Condition, fn=None) -> ttypes.ParsedExpr:
     elif isinstance(cons, exp.Not) and isinstance(cons.args['this'], exp.Like):
         return _parse_not_like(cons.args['this'], None)
     elif isinstance(cons, exp.Is):
+        # Handle IS [NOT] NULL / IS [NOT] TRUE / IS [NOT] FALSE / IS [NOT] UNKNOWN.
+        # sqlglot parses all of these as exp.Is nodes.
+        # Only IS NULL and IS NOT NULL are supported; others must be rejected.
+        if not isinstance(cons.args.get('expression'), exp.Null):
+            raise InfinityException(ErrorCode.INVALID_EXPRESSION,
+                                    f"Unsupported IS expression: {cons}. Only IS NULL / IS NOT NULL are supported.")
         # Handle IS NULL: exp.Is(this=col, expression=Null())
         parsed_expr = ttypes.ParsedExpr()
         function_expr = ttypes.FunctionExpr()
@@ -322,15 +328,21 @@ def traverse_conditions(cons: exp.Condition, fn=None) -> ttypes.ParsedExpr:
         parsed_expr.type = parser_expr_type
         return parsed_expr
     elif isinstance(cons, exp.Not) and isinstance(cons.args['this'], exp.Is):
+        # Handle IS NOT NULL / IS NOT TRUE / IS NOT FALSE / IS NOT UNKNOWN.
+        # Only IS NOT NULL is supported; others must be rejected.
+        inner_is = cons.args['this']
+        if not isinstance(inner_is.args.get('expression'), exp.Null):
+            raise InfinityException(ErrorCode.INVALID_EXPRESSION,
+                                    f"Unsupported IS expression: {cons}. Only IS NULL / IS NOT NULL are supported.")
         # Handle IS NOT NULL: exp.Not(this=exp.Is(this=col, expression=Null()))
         parsed_expr = ttypes.ParsedExpr()
         function_expr = ttypes.FunctionExpr()
         function_expr.function_name = "is_not_null"
         arguments = []
         if fn:
-            expr = fn(cons.args['this'].this)
+            expr = fn(inner_is.this)
         else:
-            expr = traverse_conditions(cons.args['this'].this)
+            expr = traverse_conditions(inner_is.this)
         arguments.append(expr)
         function_expr.arguments = arguments
         parser_expr_type = ttypes.ParsedExprType()

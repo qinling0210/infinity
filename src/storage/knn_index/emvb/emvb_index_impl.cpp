@@ -132,6 +132,14 @@ void EMVBIndex::BuildEMVBIndex(const RowID base_rowid, const u32 row_count, Segm
             }
         }
     }
+    if (embedding_count == 0) {
+        {
+            std::ostringstream oss;
+            oss << "EMVBIndex::BuildEMVBIndex: All rows contain NULL tensors, skipping index build. Row count: " << row_count;
+            LOG_INFO(std::move(oss).str());
+        }
+        return;
+    }
     const auto time_1 = std::chrono::high_resolution_clock::now();
     {
         std::ostringstream oss;
@@ -229,8 +237,8 @@ void EMVBIndex::BuildEMVBIndex(const RowID base_rowid, const u32 row_count, Segm
         }
 
         for (u32 i = 0; i < row_count; ++i) {
+            const SegmentOffset new_segment_offset = start_segment_offset + i;
             {
-                const SegmentOffset new_segment_offset = start_segment_offset + i;
                 block_offset = new_segment_offset % DEFAULT_BLOCK_CAPACITY;
                 if (const BlockID new_block_id = new_segment_offset / DEFAULT_BLOCK_CAPACITY; new_block_id != block_id) {
                     block_id = new_block_id;
@@ -251,6 +259,7 @@ void EMVBIndex::BuildEMVBIndex(const RowID base_rowid, const u32 row_count, Segm
             }
             auto [raw_data, embedding_num] = column_vector.GetTensorRaw(block_offset);
             AddOneDocEmbeddings(reinterpret_cast<const f32 *>(raw_data.data()), embedding_num);
+            doc_segment_offsets_.PushBack(new_segment_offset);
         }
         {
             const auto time_5 = std::chrono::high_resolution_clock::now();
@@ -509,6 +518,7 @@ EMVBQueryResultType EMVBIndex::GetQueryResultT(const f32 *query_ptr, const u32 q
     // access snapshot of index data
     const u32 n_docs = n_docs_.load(std::memory_order_acquire);
     const auto doc_lens_snapshot = doc_lens_.GetData();
+    const auto doc_segment_offsets_snapshot = doc_segment_offsets_.GetData();
     const auto doc_offsets_snapshot = doc_offsets_.GetData();
     const auto centroid_id_assignments_snapshot = centroid_id_assignments_.GetData();
     // execute search
@@ -516,6 +526,7 @@ EMVBQueryResultType EMVBIndex::GetQueryResultT(const f32 *query_ptr, const u32 q
                                                     n_docs,
                                                     n_centroids_,
                                                     doc_lens_snapshot.first.get(),
+                                                    doc_segment_offsets_snapshot.first.get(),
                                                     doc_offsets_snapshot.first.get(),
                                                     centroid_id_assignments_snapshot.first.get(),
                                                     centroids_data_.data(),
@@ -598,6 +609,7 @@ void EMVBIndex::SaveIndexInner(LocalFileHandle &file_handle) {
     file_handle.Append(&n_docs, sizeof(n_docs));
     file_handle.Append(&n_total_embeddings_, sizeof(n_total_embeddings_));
     Serialize(file_handle, doc_lens_, n_docs);
+    Serialize(file_handle, doc_segment_offsets_, n_docs);
     Serialize(file_handle, doc_offsets_, n_docs);
     Serialize(file_handle, centroid_id_assignments_, n_total_embeddings_);
     for (u32 i = 0; i < n_centroids_; ++i) {
@@ -647,6 +659,7 @@ void EMVBIndex::ReadIndexInner(LocalFileHandle &file_handle) {
     n_docs_ = n_docs;
     file_handle.Read(&n_total_embeddings_, sizeof(n_total_embeddings_));
     DeSerialize(file_handle, doc_lens_, n_docs);
+    DeSerialize(file_handle, doc_segment_offsets_, n_docs);
     DeSerialize(file_handle, doc_offsets_, n_docs);
     DeSerialize(file_handle, centroid_id_assignments_, n_total_embeddings_);
     centroids_to_docid_ = std::make_unique<EMVBSharedVec<u32>[]>(n_centroids_);

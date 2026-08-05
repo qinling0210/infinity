@@ -966,6 +966,9 @@ std::shared_ptr<ConstantExpr> BuildConstantSparseExprFromJson(std::string_view o
             }
             return res;
         }
+        case simdjson::json_type::null: {
+            return std::make_shared<ConstantExpr>(LiteralType::kNull);
+        }
         default: {
             const auto error_info = fmt::format("Unrecognized json object type");
             RecoverableError(Status::ImportFileFormatError(error_info));
@@ -1242,10 +1245,10 @@ void PhysicalImport::JSONLRowHandler(std::string_view line_sv, std::vector<std::
                 case LogicalType::kSparse: {
                     const auto *sparse_info = static_cast<SparseInfo *>(column_vector.data_type()->type_info().get());
                     std::shared_ptr<ConstantExpr> const_expr = BuildConstantSparseExprFromJson(doc[column_def->name_].raw_json(), sparse_info);
-                    const_expr->TrySortSparseVec(column_def);
                     if (const_expr.get() == nullptr) {
                         RecoverableError(Status::ImportFileFormatError("Invalid json object."));
                     }
+                    const_expr->TrySortSparseVec(column_def);
                     column_vector.AppendByConstantExpr(const_expr.get());
                     break;
                 }

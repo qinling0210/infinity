@@ -1450,7 +1450,15 @@ Status NewTxn::PopulateIvfIndexInner(std::shared_ptr<IndexBase> index_base,
     {
         BufferHandle buffer_handle = buffer_obj->Load();
         auto *data_ptr = static_cast<IVFIndexInChunk *>(buffer_handle.GetDataMut());
-        data_ptr->BuildIVFIndex(segment_meta, row_count, column_def);
+        if (!data_ptr->BuildIVFIndex(segment_meta, row_count, column_def)) {
+            // No non-NULL embedding vectors in this segment; remove the chunk we just allocated.
+            new_chunk_ids.pop_back();
+            status = segment_index_meta.RemoveChunkIDs({chunk_id});
+            if (!status.ok()) {
+                return status;
+            }
+            return Status::OK();
+        }
     }
     buffer_obj->Save();
     return Status::OK();
@@ -2519,6 +2527,7 @@ Status NewTxn::DumpSegmentMemIndex(SegmentIndexMeta &segment_index_meta, const C
         if (check_mem_index != nullptr) {
             auto check_emvb = check_mem_index->GetEMVBIndex();
             if (check_emvb != nullptr && !check_emvb->IsBuilt()) {
+                check_mem_index->SetIsDumping(false);
                 return Status::EmptyMemIndex();
             }
         }

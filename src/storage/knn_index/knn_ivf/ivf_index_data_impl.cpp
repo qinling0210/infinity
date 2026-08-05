@@ -95,13 +95,13 @@ private:
     ColumnVector cur_column_vector_;
 };
 
-void IVFIndexInChunk::BuildIVFIndex(SegmentMeta &segment_meta, u32 row_count, std::shared_ptr<ColumnDef> column_def) {
+bool IVFIndexInChunk::BuildIVFIndex(SegmentMeta &segment_meta, u32 row_count, std::shared_ptr<ColumnDef> column_def) {
     RowID base_rowid(segment_meta.segment_id(), 0);
     NewIVFDataAccessor data_accessor(segment_meta, column_def->id());
-    BuildIVFIndex(base_rowid, row_count, &data_accessor, column_def);
+    return BuildIVFIndex(base_rowid, row_count, &data_accessor, column_def);
 }
 
-void IVFIndexInChunk::BuildIVFIndex(RowID base_rowid,
+bool IVFIndexInChunk::BuildIVFIndex(RowID base_rowid,
                                     u32 row_count,
                                     IVFDataAccessorBase *data_accessor,
                                     const std::shared_ptr<ColumnDef> &column_def) {
@@ -131,6 +131,7 @@ void IVFIndexInChunk::BuildIVFIndex(RowID base_rowid,
             }
             default: {
                 UnrecoverableError(std::format("Invalid embedding data type {} for IVF index", column_def->type()->ToString()));
+                return false;
             }
         }
     };
@@ -143,12 +144,13 @@ void IVFIndexInChunk::BuildIVFIndex(RowID base_rowid,
         }
         default: {
             UnrecoverableError(std::format("Invalid column data type {} for IVF index", column_def->type()->ToString()));
+            return false;
         }
     }
 }
 
 template <LogicalType column_t, EmbeddingDataType embedding_t>
-void IVFIndexInChunk::BuildIVFIndexT(const RowID base_rowid,
+bool IVFIndexInChunk::BuildIVFIndexT(const RowID base_rowid,
                                      const u32 row_count,
                                      IVFDataAccessorBase *data_accessor,
                                      const std::shared_ptr<ColumnDef> &column_def) {
@@ -163,28 +165,30 @@ void IVFIndexInChunk::BuildIVFIndexT(const RowID base_rowid,
     if constexpr (column_t == LogicalType::kEmbedding) {
         // Count non-NULL rows as valid embeddings
         for (u32 i = 0; i < row_count; ++i) {
-            if (!data_accessor->IsNull(i)) {
+            const SegmentOffset seg_offset = start_segment_offset + i;
+            if (!data_accessor->IsNull(seg_offset)) {
                 ++embedding_count;
-                non_null_offsets.push_back(i);
+                non_null_offsets.push_back(seg_offset);
             }
         }
         if (embedding_count == 0) {
-            return;
+            return false;
         }
     } else {
         static_assert(column_t == LogicalType::kMultiVector);
         // read the segment to get total embedding count, skipping NULL rows
         for (u32 i = 0; i < row_count; ++i) {
-            if (!data_accessor->IsNull(i)) {
-                auto [raw_data, embedding_num] = data_accessor->GetMultiVector(i);
+            const SegmentOffset seg_offset = start_segment_offset + i;
+            if (!data_accessor->IsNull(seg_offset)) {
+                auto [raw_data, embedding_num] = data_accessor->GetMultiVector(seg_offset);
                 embedding_count += embedding_num;
                 for (u32 j = 0; j < embedding_num; ++j) {
-                    all_embedding_pos.emplace_back(i, j);
+                    all_embedding_pos.emplace_back(seg_offset, j);
                 }
             }
         }
         if (embedding_count == 0) {
-            return;
+            return false;
         }
     }
     // prepare centroid count
@@ -299,6 +303,7 @@ void IVFIndexInChunk::BuildIVFIndexT(const RowID base_rowid,
             block_offset = 0;
         }
     }
+    return true;
 }
 
 void IVFIndexInChunk::SaveIndexInner(LocalFileHandle &file_handle) const { IVF_Index_Storage::Save(file_handle); }
