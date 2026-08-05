@@ -258,8 +258,7 @@ void EMVBIndex::BuildEMVBIndex(const RowID base_rowid, const u32 row_count, Segm
                 continue;
             }
             auto [raw_data, embedding_num] = column_vector.GetTensorRaw(block_offset);
-            AddOneDocEmbeddings(reinterpret_cast<const f32 *>(raw_data.data()), embedding_num);
-            doc_segment_offsets_.PushBack(new_segment_offset);
+            AddOneDocEmbeddings(reinterpret_cast<const f32 *>(raw_data.data()), embedding_num, new_segment_offset);
         }
         {
             const auto time_5 = std::chrono::high_resolution_clock::now();
@@ -371,7 +370,7 @@ void EMVBIndex::Train(const u32 centroids_num, const f32 *embedding_data, const 
     LOG_TRACE("EMVBIndex::Train: Finish train pq for residuals.");
 }
 
-void EMVBIndex::AddOneDocEmbeddings(const f32 *embedding_data, const u32 embedding_num) {
+void EMVBIndex::AddOneDocEmbeddings(const f32 *embedding_data, const u32 embedding_num, const SegmentOffset new_segment_offset) {
     if (embedding_num == 0) {
         const auto error_msg = "EMVBIndex::AddOneDocEmbeddings: embedding_num must be greater than 0.";
         UnrecoverableError(error_msg);
@@ -382,6 +381,7 @@ void EMVBIndex::AddOneDocEmbeddings(const f32 *embedding_data, const u32 embeddi
     const u32 old_doc_num = n_docs_;
     const u32 old_total_embeddings = n_total_embeddings_;
     doc_lens_.PushBack(embedding_num);
+    doc_segment_offsets_.PushBack(new_segment_offset);
     doc_offsets_.PushBack(old_total_embeddings);
     // step 2. assign to centroids
     const auto centroid_id_assignments = std::make_unique_for_overwrite<u32[]>(embedding_num);
@@ -598,6 +598,11 @@ void DeSerialize(LocalFileHandle &file_handle, EMVBSharedVec<u32> &val) {
 void EMVBIndex::SaveIndexInner(LocalFileHandle &file_handle) {
     std::unique_lock lock(rw_mutex_);
     // write index data
+    // v1 format: magic + version header, then data
+    static constexpr u32 kEMVBMagic = 0x454D5642; // "EMVB"
+    static constexpr u32 kEMVBVersion = 1;
+    file_handle.Append(&kEMVBMagic, sizeof(kEMVBMagic));
+    file_handle.Append(&kEMVBVersion, sizeof(kEMVBVersion));
     file_handle.Append(&start_segment_offset_, sizeof(start_segment_offset_));
     file_handle.Append(&embedding_dimension_, sizeof(embedding_dimension_));
     file_handle.Append(&residual_pq_subspace_num_, sizeof(residual_pq_subspace_num_));
@@ -621,53 +626,104 @@ void EMVBIndex::SaveIndexInner(LocalFileHandle &file_handle) {
 
 void EMVBIndex::ReadIndexInner(LocalFileHandle &file_handle) {
     std::unique_lock lock(rw_mutex_);
-    // read index data
-    {
-        // check start_segment_offset_, embedding_dimension_, residual_pq_subspace_num_, residual_pq_subspace_bits_
+    static constexpr u32 kEMVBMagic = 0x454D5642; // "EMVB"
+    // read index data - detect format version
+    u32 first_word = 0;
+    file_handle.Read(&first_word, sizeof(first_word));
+    if (first_word == kEMVBMagic) {
+        // v1+ format: has doc_segment_offsets_
+        u32 version = 0;
+        file_handle.Read(&version, sizeof(version));
+        if (version != 1) {
+            UnrecoverableError(fmt::format("EMVBIndex::ReadIndexInner: unsupported version {}.", version));
+        }
+        // validate start_segment_offset_, embedding_dimension_, residual_pq_subspace_num_, residual_pq_subspace_bits_
         u32 tmp_u32 = 0;
         file_handle.Read(&tmp_u32, sizeof(tmp_u32));
         if (tmp_u32 != start_segment_offset_) {
-            const auto error_msg =
-                fmt::format("EMVBIndex::ReadIndexInner: start_segment_offset_ mismatch: expect {}, got {}.", start_segment_offset_, tmp_u32);
-            UnrecoverableError(error_msg);
+            UnrecoverableError(
+                fmt::format("EMVBIndex::ReadIndexInner: start_segment_offset_ mismatch: expect {}, got {}.", start_segment_offset_, tmp_u32));
         }
         file_handle.Read(&tmp_u32, sizeof(tmp_u32));
         if (tmp_u32 != embedding_dimension_) {
-            const auto error_msg =
-                fmt::format("EMVBIndex::ReadIndexInner: embedding_dimension_ mismatch: expect {}, got {}.", embedding_dimension_, tmp_u32);
-            UnrecoverableError(error_msg);
+            UnrecoverableError(
+                fmt::format("EMVBIndex::ReadIndexInner: embedding_dimension_ mismatch: expect {}, got {}.", embedding_dimension_, tmp_u32));
         }
         file_handle.Read(&tmp_u32, sizeof(tmp_u32));
         if (tmp_u32 != residual_pq_subspace_num_) {
-            const auto error_msg =
-                fmt::format("EMVBIndex::ReadIndexInner: residual_pq_subspace_num_ mismatch: expect {}, got {}.", residual_pq_subspace_num_, tmp_u32);
-            UnrecoverableError(error_msg);
+            UnrecoverableError(
+                fmt::format("EMVBIndex::ReadIndexInner: residual_pq_subspace_num_ mismatch: expect {}, got {}.", residual_pq_subspace_num_, tmp_u32));
         }
         file_handle.Read(&tmp_u32, sizeof(tmp_u32));
         if (tmp_u32 != residual_pq_subspace_bits_) {
-            const auto error_msg = fmt::format("EMVBIndex::ReadIndexInner: residual_pq_subspace_bits_ mismatch: expect {}, got {}.",
-                                               residual_pq_subspace_bits_,
-                                               tmp_u32);
-            UnrecoverableError(error_msg);
+            UnrecoverableError(fmt::format("EMVBIndex::ReadIndexInner: residual_pq_subspace_bits_ mismatch: expect {}, got {}.",
+                                           residual_pq_subspace_bits_,
+                                           tmp_u32));
         }
+        file_handle.Read(&n_centroids_, sizeof(n_centroids_));
+        DeSerialize(file_handle, centroids_data_);
+        DeSerialize(file_handle, centroid_norms_neg_half_);
+        u32 n_docs = 0;
+        file_handle.Read(&n_docs, sizeof(n_docs));
+        n_docs_ = n_docs;
+        file_handle.Read(&n_total_embeddings_, sizeof(n_total_embeddings_));
+        DeSerialize(file_handle, doc_lens_, n_docs);
+        DeSerialize(file_handle, doc_segment_offsets_, n_docs);
+        DeSerialize(file_handle, doc_offsets_, n_docs);
+        DeSerialize(file_handle, centroid_id_assignments_, n_total_embeddings_);
+        centroids_to_docid_ = std::make_unique<EMVBSharedVec<u32>[]>(n_centroids_);
+        for (u32 i = 0; i < n_centroids_; ++i) {
+            DeSerialize(file_handle, centroids_to_docid_[i]);
+        }
+        // read product quantizer
+        product_quantizer_->Load(file_handle);
+    } else {
+        // v0 format: first_word is start_segment_offset_, no doc_segment_offsets_ in file
+        if (first_word != start_segment_offset_) {
+            UnrecoverableError(
+                fmt::format("EMVBIndex::ReadIndexInner: start_segment_offset_ mismatch: expect {}, got {}.", start_segment_offset_, first_word));
+        }
+        // read and validate embedding_dimension_, residual_pq_subspace_num_, residual_pq_subspace_bits_
+        u32 tmp_u32 = 0;
+        file_handle.Read(&tmp_u32, sizeof(tmp_u32));
+        if (tmp_u32 != embedding_dimension_) {
+            UnrecoverableError(
+                fmt::format("EMVBIndex::ReadIndexInner: embedding_dimension_ mismatch: expect {}, got {}.", embedding_dimension_, tmp_u32));
+        }
+        file_handle.Read(&tmp_u32, sizeof(tmp_u32));
+        if (tmp_u32 != residual_pq_subspace_num_) {
+            UnrecoverableError(
+                fmt::format("EMVBIndex::ReadIndexInner: residual_pq_subspace_num_ mismatch: expect {}, got {}.", residual_pq_subspace_num_, tmp_u32));
+        }
+        file_handle.Read(&tmp_u32, sizeof(tmp_u32));
+        if (tmp_u32 != residual_pq_subspace_bits_) {
+            UnrecoverableError(fmt::format("EMVBIndex::ReadIndexInner: residual_pq_subspace_bits_ mismatch: expect {}, got {}.",
+                                           residual_pq_subspace_bits_,
+                                           tmp_u32));
+        }
+        file_handle.Read(&n_centroids_, sizeof(n_centroids_));
+        DeSerialize(file_handle, centroids_data_);
+        DeSerialize(file_handle, centroid_norms_neg_half_);
+        u32 n_docs = 0;
+        file_handle.Read(&n_docs, sizeof(n_docs));
+        n_docs_ = n_docs;
+        file_handle.Read(&n_total_embeddings_, sizeof(n_total_embeddings_));
+        DeSerialize(file_handle, doc_lens_, n_docs);
+        // v0 did not write doc_segment_offsets_; initialize with start_segment_offset_ for all docs
+        // since v0 indexes only contained documents from a single segment.
+        {
+            const std::vector<u32> seg_offsets(n_docs, start_segment_offset_);
+            doc_segment_offsets_.PushBack(seg_offsets.begin(), seg_offsets.end());
+        }
+        DeSerialize(file_handle, doc_offsets_, n_docs);
+        DeSerialize(file_handle, centroid_id_assignments_, n_total_embeddings_);
+        centroids_to_docid_ = std::make_unique<EMVBSharedVec<u32>[]>(n_centroids_);
+        for (u32 i = 0; i < n_centroids_; ++i) {
+            DeSerialize(file_handle, centroids_to_docid_[i]);
+        }
+        // read product quantizer
+        product_quantizer_->Load(file_handle);
     }
-    file_handle.Read(&n_centroids_, sizeof(n_centroids_));
-    DeSerialize(file_handle, centroids_data_);
-    DeSerialize(file_handle, centroid_norms_neg_half_);
-    u32 n_docs = 0;
-    file_handle.Read(&n_docs, sizeof(n_docs));
-    n_docs_ = n_docs;
-    file_handle.Read(&n_total_embeddings_, sizeof(n_total_embeddings_));
-    DeSerialize(file_handle, doc_lens_, n_docs);
-    DeSerialize(file_handle, doc_segment_offsets_, n_docs);
-    DeSerialize(file_handle, doc_offsets_, n_docs);
-    DeSerialize(file_handle, centroid_id_assignments_, n_total_embeddings_);
-    centroids_to_docid_ = std::make_unique<EMVBSharedVec<u32>[]>(n_centroids_);
-    for (u32 i = 0; i < n_centroids_; ++i) {
-        DeSerialize(file_handle, centroids_to_docid_[i]);
-    }
-    // read product quantizer
-    product_quantizer_->Load(file_handle);
 }
 
 EMVBIndex &EMVBIndex::operator=(EMVBIndex &&other) {

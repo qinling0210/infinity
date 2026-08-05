@@ -60,7 +60,7 @@ public:
 
     void Train(u32 centroids_num, const f32 *embedding_data, u64 embedding_num, u32 iter_cnt = 20);
 
-    void AddOneDocEmbeddings(const f32 *embedding_data, u32 embedding_num);
+    void AddOneDocEmbeddings(const f32 *embedding_data, u32 embedding_num, SegmentOffset new_segment_offset);
 
     // return id: offset in the segment
     EMVBQueryResultType SearchWithBitmask(const f32 *query_ptr,

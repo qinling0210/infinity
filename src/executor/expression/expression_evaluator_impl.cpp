@@ -181,16 +181,24 @@ void ExpressionEvaluator::Execute(const std::shared_ptr<FunctionExpression> &exp
 void ExpressionEvaluator::Execute(const std::shared_ptr<ValueExpression> &expr,
                                   std::shared_ptr<ExpressionState> &,
                                   std::shared_ptr<ColumnVector> &output_column_vector) {
-    // A kConstant vector logically represents the same value for every
-    // output row.  Write the constant value once at index 0 and finalize
-    // with the actual row count so that the DataBlock sees the correct
-    // number of rows; the vector_type remains kConstant, so downstream
-    // operators dispatch to the correct path (e.g. FCC) and only ever
-    // read index 0.  This correctly handles null values as well.
     auto value = expr->GetValue();
-    output_column_vector->SetValueByIndex(0, value);
     size_t row_count = (input_data_block_ != nullptr) ? input_data_block_->row_count() : 1;
-    output_column_vector->Finalize(row_count);
+
+    if (output_column_vector->vector_type() == ColumnVectorType::kConstant) {
+        // kConstant vector: write once at index 0 and set tail_index to 1.
+        // CopyValue (in AppendWith) checks tail_index == 1 to decide
+        // whether to broadcast index 0 to all destination rows.
+        // Use SetValueByIndex (not AppendValue) so the vector can be safely
+        // reused across multiple evaluations (e.g. inside CastExpression).
+        output_column_vector->SetValueByIndex(0, value);
+        output_column_vector->Finalize(1);
+    } else {
+        // Flat vector: write the constant value for every output row so
+        // that each position contains valid data.
+        for (size_t i = 0; i < row_count; ++i) {
+            output_column_vector->AppendValue(value);
+        }
+    }
 }
 
 void ExpressionEvaluator::Execute(const std::shared_ptr<ReferenceExpression> &expr,

@@ -77,7 +77,8 @@ void EMVBIndexInMem::Insert(const ColumnVector &column_vector,
                 continue;
             }
             auto [raw_data, embedding_num] = column_vector.GetTensorRaw(row_offset + i);
-            emvb_index_->AddOneDocEmbeddings(reinterpret_cast<const f32 *>(raw_data.data()), embedding_num);
+            const SegmentOffset new_segment_offset = begin_row_id_.segment_offset_ + row_offset + i;
+            emvb_index_->AddOneDocEmbeddings(reinterpret_cast<const f32 *>(raw_data.data()), embedding_num, new_segment_offset);
             ++row_count_;
             embedding_count_ += embedding_num;
         }

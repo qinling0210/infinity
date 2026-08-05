@@ -2275,6 +2275,8 @@ void ColumnVector::AppendWith(const ColumnVector &other, size_t from, size_t cou
     }
 
     size_t tail_index = tail_index_.load();
+    const bool source_is_constant = other.vector_type() == ColumnVectorType::kConstant;
+    const auto source_row_idx = [source_is_constant, from](size_t idx) -> size_t { return source_is_constant ? 0 : from + idx; };
     if (tail_index + count > this->capacity_) {
         UnrecoverableError(
             fmt::format("Attempt to append {} rows data to {} rows data, which exceeds {} limit.", count, tail_index, this->capacity_));
@@ -2330,10 +2332,11 @@ void ColumnVector::AppendWith(const ColumnVector &other, size_t from, size_t cou
             auto *base_src_ptr = (VarcharT *)(other.data_ptr_);
             VarcharT *base_dst_ptr = &((VarcharT *)(data_ptr_))[tail_index_.load()];
             for (size_t idx = 0; idx < count; ++idx) {
-                if (!other.nulls_ptr_->IsTrue(from + idx)) {
+                const size_t src_idx = source_row_idx(idx);
+                if (!other.nulls_ptr_->IsTrue(src_idx)) {
                     continue;
                 }
-                VarcharT &src_ref = base_src_ptr[from + idx];
+                VarcharT &src_ref = base_src_ptr[src_idx];
                 VarcharT &dst_ref = base_dst_ptr[idx];
                 CopyVarchar(dst_ref, buffer_.get(), src_ref, other.buffer_.get());
             }
@@ -2343,10 +2346,11 @@ void ColumnVector::AppendWith(const ColumnVector &other, size_t from, size_t cou
             auto *base_src_ptr = (JsonT *)(other.data_ptr_);
             JsonT *base_dst_ptr = &((JsonT *)(data_ptr_))[tail_index_.load()];
             for (size_t idx = 0; idx < count; ++idx) {
-                if (!other.nulls_ptr_->IsTrue(from + idx)) {
+                const size_t src_idx = source_row_idx(idx);
+                if (!other.nulls_ptr_->IsTrue(src_idx)) {
                     continue;
                 }
-                JsonT &src_ref = base_src_ptr[from + idx];
+                JsonT &src_ref = base_src_ptr[src_idx];
                 JsonT &dst_ref = base_dst_ptr[idx];
                 dst_ref.length_ = src_ref.length_;
 
@@ -2362,10 +2366,11 @@ void ColumnVector::AppendWith(const ColumnVector &other, size_t from, size_t cou
             MultiVectorT *base_dst_ptr = ((MultiVectorT *)(data_ptr_)) + tail_index_.load();
             const auto *embedding_info = static_cast<const EmbeddingInfo *>(data_type_->type_info().get());
             for (size_t idx = 0; idx < count; ++idx) {
-                if (!other.nulls_ptr_->IsTrue(from + idx)) {
+                const size_t src_idx = source_row_idx(idx);
+                if (!other.nulls_ptr_->IsTrue(src_idx)) {
                     continue;
                 }
-                const MultiVectorT &src_ref = base_src_ptr[from + idx];
+                const MultiVectorT &src_ref = base_src_ptr[src_idx];
                 MultiVectorT &dst_ref = base_dst_ptr[idx];
                 CopyMultiVector(dst_ref, buffer_.get(), src_ref, other.buffer_.get(), embedding_info);
             }
@@ -2376,10 +2381,11 @@ void ColumnVector::AppendWith(const ColumnVector &other, size_t from, size_t cou
             TensorT *base_dst_ptr = ((TensorT *)(data_ptr_)) + tail_index_.load();
             const auto *embedding_info = static_cast<const EmbeddingInfo *>(data_type_->type_info().get());
             for (size_t idx = 0; idx < count; ++idx) {
-                if (!other.nulls_ptr_->IsTrue(from + idx)) {
+                const size_t src_idx = source_row_idx(idx);
+                if (!other.nulls_ptr_->IsTrue(src_idx)) {
                     continue;
                 }
-                const TensorT &src_ref = base_src_ptr[from + idx];
+                const TensorT &src_ref = base_src_ptr[src_idx];
                 TensorT &dst_ref = base_dst_ptr[idx];
                 CopyTensor(dst_ref, buffer_.get(), src_ref, other.buffer_.get(), embedding_info);
             }
@@ -2390,10 +2396,11 @@ void ColumnVector::AppendWith(const ColumnVector &other, size_t from, size_t cou
             TensorArrayT *base_dst_ptr = ((TensorArrayT *)(data_ptr_)) + tail_index_.load();
             const auto *embedding_info = static_cast<const EmbeddingInfo *>(data_type_->type_info().get());
             for (size_t idx = 0; idx < count; ++idx) {
-                if (!other.nulls_ptr_->IsTrue(from + idx)) {
+                const size_t src_idx = source_row_idx(idx);
+                if (!other.nulls_ptr_->IsTrue(src_idx)) {
                     continue;
                 }
-                const TensorArrayT &src_ref = base_src_ptr[from + idx];
+                const TensorArrayT &src_ref = base_src_ptr[src_idx];
                 TensorArrayT &dst_ref = base_dst_ptr[idx];
                 CopyTensorArray(dst_ref, buffer_.get(), src_ref, other.buffer_.get(), embedding_info);
             }
@@ -2404,10 +2411,11 @@ void ColumnVector::AppendWith(const ColumnVector &other, size_t from, size_t cou
             auto *base_dst_ptr = reinterpret_cast<SparseT *>(data_ptr_) + tail_index_.load();
             const auto *sparse_info = static_cast<const SparseInfo *>(data_type_->type_info().get());
             for (size_t idx = 0; idx < count; ++idx) {
-                if (!other.nulls_ptr_->IsTrue(from + idx)) {
+                const size_t src_idx = source_row_idx(idx);
+                if (!other.nulls_ptr_->IsTrue(src_idx)) {
                     continue;
                 }
-                const SparseT &src_sparse = base_src_ptr[from + idx];
+                const SparseT &src_sparse = base_src_ptr[src_idx];
                 SparseT &dst_sparse = base_dst_ptr[idx];
                 CopySparse(dst_sparse, buffer_.get(), src_sparse, other.buffer_.get(), sparse_info);
             }
@@ -2418,10 +2426,11 @@ void ColumnVector::AppendWith(const ColumnVector &other, size_t from, size_t cou
             auto *base_dst_ptr = reinterpret_cast<ArrayT *>(data_ptr_) + tail_index_.load();
             const auto *array_info = static_cast<const ArrayInfo *>(data_type_->type_info().get());
             for (size_t idx = 0; idx < count; ++idx) {
-                if (!other.nulls_ptr_->IsTrue(from + idx)) {
+                const size_t src_idx = source_row_idx(idx);
+                if (!other.nulls_ptr_->IsTrue(src_idx)) {
                     continue;
                 }
-                const ArrayT &src_array = base_src_ptr[from + idx];
+                const ArrayT &src_array = base_src_ptr[src_idx];
                 ArrayT &dst_array = base_dst_ptr[idx];
                 CopyArray(dst_array, buffer_.get(), src_array, other.buffer_.get(), array_info);
             }
@@ -2482,11 +2491,10 @@ void ColumnVector::AppendWith(const ColumnVector &other, size_t from, size_t cou
             //        case kBlob: {
             //        }
         case LogicalType::kEmbedding: {
-            //            auto *base_src_ptr = (EmbeddingT *)(other.data_ptr_);
             auto *base_src_ptr = other.data_ptr_;
             char *base_dst_ptr = data_ptr_ + tail_index_.load() * data_type_->Size();
             for (size_t idx = 0; idx < count; ++idx) {
-                char *src_ptr = base_src_ptr + (from + idx) * data_type_->Size();
+                const char *src_ptr = base_src_ptr + source_row_idx(idx) * data_type_->Size();
                 char *dst_ptr = base_dst_ptr + idx * data_type_->Size();
                 std::memcpy(dst_ptr, src_ptr, data_type_->Size());
             }
@@ -2514,7 +2522,7 @@ void ColumnVector::AppendWith(const ColumnVector &other, size_t from, size_t cou
 
     // Copy the null mask
     for (size_t idx = 0; idx < count; ++idx) {
-        if (!other.nulls_ptr_->IsTrue(from + idx)) {
+        if (!other.nulls_ptr_->IsTrue(source_row_idx(idx))) {
             this->nulls_ptr_->SetFalse(tail_index + idx);
         }
     }

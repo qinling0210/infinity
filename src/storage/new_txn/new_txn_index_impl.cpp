@@ -1086,6 +1086,11 @@ Status NewTxn::PopulateIndex(const std::string &db_name,
             if (!status.ok()) {
                 return status;
             }
+            if (new_chunk_ids.empty()) {
+                // No non-NULL embedding vectors in this segment; remove the segment from index
+                // so that queries will fall back to brute force search
+                table_index_meta.RemoveSegmentIndexIDs({segment_meta.segment_id()});
+            }
             break;
         }
         case IndexType::kEMVB: {
