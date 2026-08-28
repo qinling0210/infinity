@@ -63,6 +63,9 @@ KVInstance::~KVInstance() {
 }
 
 Status KVInstance::Put(const std::string &key, const std::string &value) {
+    if (read_only_db_ != nullptr) {
+        return Status::NotSupport("KVInstance is read-only");
+    }
     //    LOG_TRACE(fmt::format("To put key: {}, value: {}", key, value));
     rocksdb::Status s = transaction_->Put(key, value);
     if (!s.ok()) {
@@ -74,6 +77,9 @@ Status KVInstance::Put(const std::string &key, const std::string &value) {
 }
 
 Status KVInstance::Delete(const std::string &key) {
+    if (read_only_db_ != nullptr) {
+        return Status::NotSupport("KVInstance is read-only");
+    }
     //    LOG_TRACE(fmt::format("To delete key: {}", key));
     rocksdb::Status s = transaction_->Delete(key);
     if (!s.ok()) {
@@ -159,7 +165,8 @@ std::vector<std::pair<std::string, std::string>> KVInstance::GetAllKeyValue() {
 std::string KVInstance::ToString() const {
     std::stringstream ss;
     rocksdb::ReadOptions read_option;
-    std::unique_ptr<rocksdb::Iterator> iter{transaction_->GetIterator(read_options_)};
+    std::unique_ptr<rocksdb::Iterator> iter{read_only_db_ != nullptr ? read_only_db_->NewIterator(read_options_)
+                                                                     : transaction_->GetIterator(read_options_)};
     iter->SeekToFirst();
     for (; iter->Valid(); iter->Next()) {
         auto key = iter->key().ToString();
@@ -174,6 +181,9 @@ std::string KVInstance::ToString() const {
 }
 
 Status KVInstance::Commit() {
+    if (read_only_db_ != nullptr) {
+        return Status::NotSupport("KVInstance is read-only");
+    }
     rocksdb::Status s = transaction_->Commit();
     if (!s.ok()) {
         return Status::RocksDBError(std::move(s), "rocksdb::Transaction::Commit");
@@ -185,6 +195,9 @@ Status KVInstance::Commit() {
     return Status::OK();
 }
 Status KVInstance::Rollback() {
+    if (read_only_db_ != nullptr) {
+        return Status::NotSupport("KVInstance is read-only");
+    }
     rocksdb::Status s = transaction_->Rollback();
     if (!s.ok()) {
         return Status::RocksDBError(std::move(s), "rocksdb::Transaction::Rollback");
@@ -314,13 +327,29 @@ Status KVStore::Init(const std::string &db_path) {
 
 Status KVStore::InitReadOnly(const std::string &db_path) {
     db_path_ = db_path;
-    options_.create_if_missing = true;
+    // Note: rocksdb::DB::OpenForReadOnly ignores options_.create_if_missing and never creates the
+    // database. Do not set it here.
+    options_.create_if_missing = false;
     options_.merge_operator = String2UInt64AddOperator::Create();
     options_.avoid_flush_during_shutdown = true;
     options_.manual_wal_flush = true;
     write_options_.disableWAL = true;
 
     txn_options_.set_snapshot = true;
+
+    // Admin mode may be entered before any catalog exists (e.g. initial startup as admin, or error
+    // paths that fall back to admin). Since OpenForReadOnly refuses to create a missing database,
+    // create an empty catalog first so the read-only open below succeeds.
+    if (!std::filesystem::exists(fmt::format("{}/CURRENT", db_path_))) {
+        std::unique_ptr<rocksdb::DB> empty_db;
+        rocksdb::Options create_options;
+        create_options.create_if_missing = true;
+        create_options.merge_operator = options_.merge_operator;
+        rocksdb::Status create_s = rocksdb::DB::Open(create_options, db_path_, &empty_db);
+        if (!create_s.ok()) {
+            return Status::RocksDBError(std::move(create_s), fmt::format("rocksdb::DB::Open (create empty catalog) db path: {}", db_path));
+        }
+    }
 
     // Open the catalog in read-only mode, passing the merge operator set above so RocksDB can
     // correctly interpret Merge-write keys. Ownership is transferred to read_only_db_.

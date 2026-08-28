@@ -957,6 +957,10 @@ QueryResult AdminExecutor::ListTables(QueryContext *query_context, const AdminSt
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct table_output_obj {
@@ -974,7 +978,7 @@ QueryResult AdminExecutor::ListTables(QueryContext *query_context, const AdminSt
     auto schema_name = admin_statement->schema_name_.has_value() ? admin_statement->schema_name_.value() : query_context->schema_name();
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -998,7 +1002,7 @@ QueryResult AdminExecutor::ListTables(QueryContext *query_context, const AdminSt
     }
 
     // Now list all tables in this database
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     auto catalog_table_prefix = KeyEncode::CatalogDbTablePrefix(db_id_str);
     catalog_table_iter->Seek(catalog_table_prefix);
 
@@ -1017,7 +1021,7 @@ QueryResult AdminExecutor::ListTables(QueryContext *query_context, const AdminSt
             TxnTimeStamp table_commit_ts = std::stoull(Partition(table_key, '|').back());
 
             // Check if table is dropped
-            auto drop_iter = db->NewIterator(read_options);
+            std::unique_ptr<rocksdb::Iterator> drop_iter{db->NewIterator(read_options)};
             auto drop_table_prefix = fmt::format("drop|tbl|{}/", db_id_str);
             drop_iter->Seek(drop_table_prefix);
             bool dropped{};
@@ -1141,6 +1145,10 @@ QueryResult AdminExecutor::ShowTable(QueryContext *query_context, const AdminSta
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct table_output_obj {
@@ -1158,7 +1166,7 @@ QueryResult AdminExecutor::ShowTable(QueryContext *query_context, const AdminSta
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -1183,7 +1191,7 @@ QueryResult AdminExecutor::ShowTable(QueryContext *query_context, const AdminSta
 
     // Now get the specific table
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
 
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
@@ -1192,7 +1200,7 @@ QueryResult AdminExecutor::ShowTable(QueryContext *query_context, const AdminSta
         TxnTimeStamp table_commit_ts = std::stoull(Partition(key_str, '|').back());
 
         // Check if table is dropped
-        auto drop_iter = db->NewIterator(read_options);
+        std::unique_ptr<rocksdb::Iterator> drop_iter{db->NewIterator(read_options)};
         auto drop_table_prefix = fmt::format("drop|tbl|{}/", db_id_str);
         drop_iter->Seek(drop_table_prefix);
         bool dropped{};
@@ -1317,6 +1325,10 @@ QueryResult AdminExecutor::ListSegments(QueryContext *query_context, const Admin
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct segment_output_obj {
@@ -1333,7 +1345,7 @@ QueryResult AdminExecutor::ListSegments(QueryContext *query_context, const Admin
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -1362,7 +1374,7 @@ QueryResult AdminExecutor::ListSegments(QueryContext *query_context, const Admin
     std::string table_id_str;
     TxnTimeStamp latest_table_ts = 0;
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
         TxnTimeStamp table_ts = std::stoull(Partition(catalog_table_iter->key().ToString(), '|').back());
@@ -1379,7 +1391,7 @@ QueryResult AdminExecutor::ListSegments(QueryContext *query_context, const Admin
 
     // Now list all segments in this table
     auto catalog_segment_prefix = KeyEncode::CatalogTableSegmentKeyPrefix(db_id_str, table_id_str);
-    auto catalog_segment_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_segment_iter{db->NewIterator(read_options)};
     catalog_segment_iter->Seek(catalog_segment_prefix);
 
     while (catalog_segment_iter->Valid() && catalog_segment_iter->key().starts_with(catalog_segment_prefix)) {
@@ -1390,7 +1402,7 @@ QueryResult AdminExecutor::ListSegments(QueryContext *query_context, const Admin
             SegmentID segment_id = static_cast<SegmentID>(std::stoull(parts[4]));
 
             // Check if segment is dropped
-            auto drop_iter = db->NewIterator(read_options);
+            std::unique_ptr<rocksdb::Iterator> drop_iter{db->NewIterator(read_options)};
             auto drop_key = KeyEncode::DropSegmentKey(db_id_str, table_id_str, segment_id);
             drop_iter->Seek(drop_key);
             // Exact-match the drop key: Seek may land on a larger key, so merely checking Valid()
@@ -1494,6 +1506,10 @@ QueryResult AdminExecutor::ShowSegment(QueryContext *query_context, const AdminS
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct segment_output_obj {
@@ -1511,7 +1527,7 @@ QueryResult AdminExecutor::ShowSegment(QueryContext *query_context, const AdminS
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -1540,7 +1556,7 @@ QueryResult AdminExecutor::ShowSegment(QueryContext *query_context, const AdminS
     std::string table_id_str;
     TxnTimeStamp latest_table_ts = 0;
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
         TxnTimeStamp table_ts = std::stoull(Partition(catalog_table_iter->key().ToString(), '|').back());
@@ -1557,12 +1573,12 @@ QueryResult AdminExecutor::ShowSegment(QueryContext *query_context, const AdminS
 
     // Get the specific segment
     auto catalog_segment_key = KeyEncode::CatalogTableSegmentKey(db_id_str, table_id_str, static_cast<SegmentID>(segment_id));
-    auto catalog_segment_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_segment_iter{db->NewIterator(read_options)};
     catalog_segment_iter->Seek(catalog_segment_key);
 
     if (catalog_segment_iter->Valid() && catalog_segment_iter->key().ToString() == catalog_segment_key) {
         // Check if segment is dropped
-        auto drop_iter = db->NewIterator(read_options);
+        std::unique_ptr<rocksdb::Iterator> drop_iter{db->NewIterator(read_options)};
         auto drop_key = KeyEncode::DropSegmentKey(db_id_str, table_id_str, static_cast<SegmentID>(segment_id));
         drop_iter->Seek(drop_key);
         // Exact-match the drop key: Seek may land on a larger key, so merely checking Valid()
@@ -1664,6 +1680,10 @@ QueryResult AdminExecutor::ListBlocks(QueryContext *query_context, const AdminSt
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct block_output_obj {
@@ -1681,7 +1701,7 @@ QueryResult AdminExecutor::ListBlocks(QueryContext *query_context, const AdminSt
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -1710,7 +1730,7 @@ QueryResult AdminExecutor::ListBlocks(QueryContext *query_context, const AdminSt
     std::string table_id_str;
     TxnTimeStamp latest_table_ts = 0;
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
         TxnTimeStamp table_ts = std::stoull(Partition(catalog_table_iter->key().ToString(), '|').back());
@@ -1729,13 +1749,13 @@ QueryResult AdminExecutor::ListBlocks(QueryContext *query_context, const AdminSt
     // segment, so resolve the segment's drop key once up front.
     bool segment_dropped = false;
     auto segment_drop_key = KeyEncode::DropSegmentKey(db_id_str, table_id_str, static_cast<SegmentID>(segment_id));
-    auto segment_drop_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> segment_drop_iter{db->NewIterator(read_options)};
     segment_drop_iter->Seek(segment_drop_key);
     segment_dropped = segment_drop_iter->Valid() && segment_drop_iter->key().ToString() == segment_drop_key;
 
     // Now list all blocks in this segment
     auto catalog_block_prefix = KeyEncode::CatalogTableSegmentBlockKeyPrefix(db_id_str, table_id_str, static_cast<SegmentID>(segment_id));
-    auto catalog_block_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_block_iter{db->NewIterator(read_options)};
     catalog_block_iter->Seek(catalog_block_prefix);
 
     while (catalog_block_iter->Valid() && catalog_block_iter->key().starts_with(catalog_block_prefix)) {
@@ -1841,6 +1861,10 @@ QueryResult AdminExecutor::ShowBlock(QueryContext *query_context, const AdminSta
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct block_output_obj {
@@ -1859,7 +1883,7 @@ QueryResult AdminExecutor::ShowBlock(QueryContext *query_context, const AdminSta
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -1888,7 +1912,7 @@ QueryResult AdminExecutor::ShowBlock(QueryContext *query_context, const AdminSta
     std::string table_id_str;
     TxnTimeStamp latest_table_ts = 0;
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
         TxnTimeStamp table_ts = std::stoull(Partition(catalog_table_iter->key().ToString(), '|').back());
@@ -1906,14 +1930,14 @@ QueryResult AdminExecutor::ShowBlock(QueryContext *query_context, const AdminSta
     // Get the specific block
     auto catalog_block_key =
         KeyEncode::CatalogTableSegmentBlockKey(db_id_str, table_id_str, static_cast<SegmentID>(segment_id), static_cast<BlockID>(block_id));
-    auto catalog_block_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_block_iter{db->NewIterator(read_options)};
     catalog_block_iter->Seek(catalog_block_key);
 
     if (catalog_block_iter->Valid() && catalog_block_iter->key().ToString() == catalog_block_key) {
         // Blocks are not dropped individually; they inherit the dropped status of their containing segment.
         bool dropped = false;
         auto segment_drop_key = KeyEncode::DropSegmentKey(db_id_str, table_id_str, static_cast<SegmentID>(segment_id));
-        auto segment_drop_iter = db->NewIterator(read_options);
+        std::unique_ptr<rocksdb::Iterator> segment_drop_iter{db->NewIterator(read_options)};
         segment_drop_iter->Seek(segment_drop_key);
         dropped = segment_drop_iter->Valid() && segment_drop_iter->key().ToString() == segment_drop_key;
 
@@ -2012,6 +2036,10 @@ QueryResult AdminExecutor::ListColumns(QueryContext *query_context, const AdminS
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct column_output_obj {
@@ -2028,7 +2056,7 @@ QueryResult AdminExecutor::ListColumns(QueryContext *query_context, const AdminS
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -2057,7 +2085,7 @@ QueryResult AdminExecutor::ListColumns(QueryContext *query_context, const AdminS
     std::string table_id_str;
     TxnTimeStamp latest_table_ts = 0;
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
         TxnTimeStamp table_ts = std::stoull(Partition(catalog_table_iter->key().ToString(), '|').back());
@@ -2076,7 +2104,7 @@ QueryResult AdminExecutor::ListColumns(QueryContext *query_context, const AdminS
     // Note: In current implementation, columns are stored in table metadata, not as separate entries
     // For simplicity, we'll use the TableColumnPrefix to scan for column metadata
     auto catalog_column_prefix = KeyEncode::TableColumnPrefix(db_id_str, table_id_str);
-    auto catalog_column_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_column_iter{db->NewIterator(read_options)};
     catalog_column_iter->Seek(catalog_column_prefix);
 
     while (catalog_column_iter->Valid() && catalog_column_iter->key().starts_with(catalog_column_prefix)) {
@@ -2087,7 +2115,7 @@ QueryResult AdminExecutor::ListColumns(QueryContext *query_context, const AdminS
             std::string column_name = parts[4];
 
             // Check if column is dropped
-            auto drop_iter = db->NewIterator(read_options);
+            std::unique_ptr<rocksdb::Iterator> drop_iter{db->NewIterator(read_options)};
             auto drop_col_prefix = fmt::format("drop|tbl_col|{}/{}/", db_id_str, table_id_str);
             drop_iter->Seek(drop_col_prefix);
             bool dropped{};
@@ -2200,6 +2228,10 @@ QueryResult AdminExecutor::ShowColumn(QueryContext *query_context, const AdminSt
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct column_output_obj {
@@ -2217,7 +2249,7 @@ QueryResult AdminExecutor::ShowColumn(QueryContext *query_context, const AdminSt
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -2246,7 +2278,7 @@ QueryResult AdminExecutor::ShowColumn(QueryContext *query_context, const AdminSt
     std::string table_id_str;
     TxnTimeStamp latest_table_ts = 0;
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
         TxnTimeStamp table_ts = std::stoull(Partition(catalog_table_iter->key().ToString(), '|').back());
@@ -2263,7 +2295,7 @@ QueryResult AdminExecutor::ShowColumn(QueryContext *query_context, const AdminSt
 
     // Get all columns and find the one with matching column_id
     auto catalog_column_prefix = KeyEncode::TableColumnPrefix(db_id_str, table_id_str);
-    auto catalog_column_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_column_iter{db->NewIterator(read_options)};
     catalog_column_iter->Seek(catalog_column_prefix);
 
     while (catalog_column_iter->Valid() && catalog_column_iter->key().starts_with(catalog_column_prefix)) {
@@ -2281,7 +2313,7 @@ QueryResult AdminExecutor::ShowColumn(QueryContext *query_context, const AdminSt
                     if (column_id == column_id_target) {
                         // Found the matching column
                         // Check if column is dropped
-                        auto drop_iter = db->NewIterator(read_options);
+                        std::unique_ptr<rocksdb::Iterator> drop_iter{db->NewIterator(read_options)};
                         auto drop_col_prefix = fmt::format("drop|tbl_col|{}/{}/", db_id_str, table_id_str);
                         drop_iter->Seek(drop_col_prefix);
                         bool dropped{};
@@ -2400,6 +2432,10 @@ QueryResult AdminExecutor::ListIndexes(QueryContext *query_context, const AdminS
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct index_output_obj {
@@ -2416,7 +2452,7 @@ QueryResult AdminExecutor::ListIndexes(QueryContext *query_context, const AdminS
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -2445,7 +2481,7 @@ QueryResult AdminExecutor::ListIndexes(QueryContext *query_context, const AdminS
     std::string table_id_str;
     TxnTimeStamp latest_table_ts = 0;
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
         TxnTimeStamp table_ts = std::stoull(Partition(catalog_table_iter->key().ToString(), '|').back());
@@ -2462,7 +2498,7 @@ QueryResult AdminExecutor::ListIndexes(QueryContext *query_context, const AdminS
 
     // Now list all indexes in this table
     auto catalog_index_prefix = KeyEncode::CatalogTableIndexPrefix(db_id_str, table_id_str);
-    auto catalog_index_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_index_iter{db->NewIterator(read_options)};
     catalog_index_iter->Seek(catalog_index_prefix);
 
     while (catalog_index_iter->Valid() && catalog_index_iter->key().starts_with(catalog_index_prefix)) {
@@ -2477,7 +2513,7 @@ QueryResult AdminExecutor::ListIndexes(QueryContext *query_context, const AdminS
             // Check if index is dropped.
             // DropTableIndexKey format: drop|idx|{db_id}/{table_id}/{index_name}/{commit_ts}/{index_id}
             // so after partitioning by '/', parts[2] is the index name and parts[3] is the commit ts.
-            auto drop_iter = db->NewIterator(read_options);
+            std::unique_ptr<rocksdb::Iterator> drop_iter{db->NewIterator(read_options)};
             auto drop_idx_prefix = fmt::format("drop|idx|{}/{}/", db_id_str, table_id_str);
             drop_iter->Seek(drop_idx_prefix);
             bool dropped{};
@@ -2591,6 +2627,10 @@ QueryResult AdminExecutor::ShowIndex(QueryContext *query_context, const AdminSta
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct index_output_obj {
@@ -2608,7 +2648,7 @@ QueryResult AdminExecutor::ShowIndex(QueryContext *query_context, const AdminSta
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -2637,7 +2677,7 @@ QueryResult AdminExecutor::ShowIndex(QueryContext *query_context, const AdminSta
     std::string table_id_str;
     TxnTimeStamp latest_table_ts = 0;
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
         TxnTimeStamp table_ts = std::stoull(Partition(catalog_table_iter->key().ToString(), '|').back());
@@ -2654,7 +2694,7 @@ QueryResult AdminExecutor::ShowIndex(QueryContext *query_context, const AdminSta
 
     // Get the specific index
     auto catalog_index_prefix = KeyEncode::CatalogIndexPrefix(db_id_str, table_id_str, index_name);
-    auto catalog_index_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_index_iter{db->NewIterator(read_options)};
     catalog_index_iter->Seek(catalog_index_prefix);
 
     if (catalog_index_iter->Valid() && catalog_index_iter->key().starts_with(catalog_index_prefix)) {
@@ -2667,7 +2707,7 @@ QueryResult AdminExecutor::ShowIndex(QueryContext *query_context, const AdminSta
             // Check if index is dropped.
             // DropTableIndexKey format: drop|idx|{db_id}/{table_id}/{index_name}/{commit_ts}/{index_id}
             // so after partitioning by '/', parts[2] is the index name and parts[3] is the commit ts.
-            auto drop_iter = db->NewIterator(read_options);
+            std::unique_ptr<rocksdb::Iterator> drop_iter{db->NewIterator(read_options)};
             auto drop_idx_prefix = fmt::format("drop|idx|{}/{}/", db_id_str, table_id_str);
             drop_iter->Seek(drop_idx_prefix);
             bool dropped{};
@@ -2781,6 +2821,10 @@ QueryResult AdminExecutor::ListIndexSegments(QueryContext *query_context, const 
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct segment_output_obj {
@@ -2798,7 +2842,7 @@ QueryResult AdminExecutor::ListIndexSegments(QueryContext *query_context, const 
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -2827,7 +2871,7 @@ QueryResult AdminExecutor::ListIndexSegments(QueryContext *query_context, const 
     std::string table_id_str;
     TxnTimeStamp latest_table_ts = 0;
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
         TxnTimeStamp table_ts = std::stoull(Partition(catalog_table_iter->key().ToString(), '|').back());
@@ -2845,7 +2889,7 @@ QueryResult AdminExecutor::ListIndexSegments(QueryContext *query_context, const 
     // Get index_id
     std::string index_id_str;
     auto catalog_index_prefix = KeyEncode::CatalogIndexPrefix(db_id_str, table_id_str, index_name);
-    auto catalog_index_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_index_iter{db->NewIterator(read_options)};
     catalog_index_iter->Seek(catalog_index_prefix);
 
     if (catalog_index_iter->Valid() && catalog_index_iter->key().starts_with(catalog_index_prefix)) {
@@ -2858,7 +2902,7 @@ QueryResult AdminExecutor::ListIndexSegments(QueryContext *query_context, const 
 
     // Now list all index segments in this index
     auto catalog_idx_seg_prefix = KeyEncode::CatalogIdxSegmentKeyPrefix(db_id_str, table_id_str, index_id_str);
-    auto catalog_idx_seg_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_idx_seg_iter{db->NewIterator(read_options)};
     catalog_idx_seg_iter->Seek(catalog_idx_seg_prefix);
 
     while (catalog_idx_seg_iter->Valid() && catalog_idx_seg_iter->key().starts_with(catalog_idx_seg_prefix)) {
@@ -2871,7 +2915,7 @@ QueryResult AdminExecutor::ListIndexSegments(QueryContext *query_context, const 
             SegmentID segment_id = static_cast<SegmentID>(std::stoull(parts[4]));
 
             // Check if index segment is dropped
-            auto drop_iter = db->NewIterator(read_options);
+            std::unique_ptr<rocksdb::Iterator> drop_iter{db->NewIterator(read_options)};
             auto drop_key = KeyEncode::DropSegmentIndexKey(db_id_str, table_id_str, index_id_str, segment_id);
             drop_iter->Seek(drop_key);
             // Exact-match the drop key: Seek may land on a larger key, so merely checking Valid()
@@ -2976,6 +3020,10 @@ QueryResult AdminExecutor::ShowIndexSegment(QueryContext *query_context, const A
         return query_result;
     }
     rocksdb::DB *db = kv_store->ReadableDB();
+    if (db == nullptr) {
+        query_result.status_ = Status::UnexpectedError("Catalog KV store is not opened");
+        return query_result;
+    }
     rocksdb::ReadOptions read_options;
 
     struct segment_output_obj {
@@ -2994,7 +3042,7 @@ QueryResult AdminExecutor::ShowIndexSegment(QueryContext *query_context, const A
     // First get the db_id from the schema name
     std::string db_id_str;
     TxnTimeStamp latest_db_ts = 0;
-    auto catalog_db_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_db_iter{db->NewIterator(read_options)};
     catalog_db_iter->Seek(KeyEncode::kCatalogDbHeader);
 
     while (catalog_db_iter->Valid() && catalog_db_iter->key().starts_with(KeyEncode::kCatalogDbHeader)) {
@@ -3023,7 +3071,7 @@ QueryResult AdminExecutor::ShowIndexSegment(QueryContext *query_context, const A
     std::string table_id_str;
     TxnTimeStamp latest_table_ts = 0;
     auto catalog_table_prefix = KeyEncode::CatalogTablePrefix(db_id_str, table_name);
-    auto catalog_table_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_table_iter{db->NewIterator(read_options)};
     catalog_table_iter->Seek(catalog_table_prefix);
     while (catalog_table_iter->Valid() && catalog_table_iter->key().starts_with(catalog_table_prefix)) {
         TxnTimeStamp table_ts = std::stoull(Partition(catalog_table_iter->key().ToString(), '|').back());
@@ -3041,7 +3089,7 @@ QueryResult AdminExecutor::ShowIndexSegment(QueryContext *query_context, const A
     // Get index_id
     std::string index_id_str;
     auto catalog_index_prefix = KeyEncode::CatalogIndexPrefix(db_id_str, table_id_str, index_name);
-    auto catalog_index_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_index_iter{db->NewIterator(read_options)};
     catalog_index_iter->Seek(catalog_index_prefix);
 
     if (catalog_index_iter->Valid() && catalog_index_iter->key().starts_with(catalog_index_prefix)) {
@@ -3054,12 +3102,12 @@ QueryResult AdminExecutor::ShowIndexSegment(QueryContext *query_context, const A
 
     // Get the specific index segment
     auto catalog_idx_seg_key = KeyEncode::CatalogIdxSegmentKey(db_id_str, table_id_str, index_id_str, static_cast<SegmentID>(segment_id));
-    auto catalog_idx_seg_iter = db->NewIterator(read_options);
+    std::unique_ptr<rocksdb::Iterator> catalog_idx_seg_iter{db->NewIterator(read_options)};
     catalog_idx_seg_iter->Seek(catalog_idx_seg_key);
 
     if (catalog_idx_seg_iter->Valid() && catalog_idx_seg_iter->key().ToString() == catalog_idx_seg_key) {
         // Check if index segment is dropped
-        auto drop_iter = db->NewIterator(read_options);
+        std::unique_ptr<rocksdb::Iterator> drop_iter{db->NewIterator(read_options)};
         auto drop_key = KeyEncode::DropSegmentIndexKey(db_id_str, table_id_str, index_id_str, static_cast<SegmentID>(segment_id));
         drop_iter->Seek(drop_key);
         // Exact-match the drop key: Seek may land on a larger key, so merely checking Valid()

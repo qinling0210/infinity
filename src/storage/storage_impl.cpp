@@ -205,6 +205,10 @@ Status Storage::UnInitFromAdmin() {
             memory_index_tracer_.reset();
         }
 
+        // Release the read-only catalog KVStore opened by InitToAdmin. Leaving it alive keeps a
+        // KVInstance with a null transaction_ around, which crashes write paths if it is reused.
+        kv_store_.reset();
+
         current_storage_mode_ = StorageMode::kUnInitialized;
     }
     LOG_INFO(fmt::format("Finishing un-initializing storage from admin mode to un-init"));
@@ -886,6 +890,15 @@ Status Storage::AdminToReaderBottom(TxnTimeStamp system_start_ts) {
         UnrecoverableError("Background processor was initialized before.");
     }
     bg_processor_ = std::make_unique<BGTaskProcessor>();
+
+    // The KVStore left over from the admin (read-only) phase is not writable: GetInstance()
+    // returns an instance with a null transaction_ that crashes write paths. Replace it with a
+    // writable KVStore before constructing the txn manager.
+    kv_store_ = std::make_unique<KVStore>();
+    Status kv_store_status = kv_store_->Init(config_ptr_->CatalogDir());
+    if (!kv_store_status.ok()) {
+        return kv_store_status;
+    }
 
     // TODO: new txn manager
     new_txn_mgr_ = std::make_unique<NewTxnManager>(this, kv_store_.get(), system_start_ts);
