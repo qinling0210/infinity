@@ -148,6 +148,19 @@ Status Storage::InitToAdmin() {
             persistence_manager_ =
                 std::make_unique<PersistenceManager>(this, persistence_dir, config_ptr_->DataDir(), (size_t)persistence_object_size_limit);
         }
+
+        // In maintenance (admin) mode the storage layer is not fully initialized, but the
+        // catalog DB must be readable for ADMIN introspection commands (e.g. ADMIN SHOW DATABASES).
+        // Open it read-only so those commands can reuse the KVStore traversal instead of re-opening
+        // the RocksDB via DB::OpenForReadOnly (whose DBImplReadOnly destructor asserts on this catalog).
+        if (kv_store_ == nullptr) {
+            kv_store_ = std::make_unique<KVStore>();
+        }
+        Status init_ro_status = kv_store_->InitReadOnly(config_ptr_->CatalogDir());
+        if (!init_ro_status.ok()) {
+            return init_ro_status;
+        }
+
         current_storage_mode_ = StorageMode::kAdmin;
     }
     LOG_INFO(fmt::format("Finish initializing storage from un-init mode to admin"));
